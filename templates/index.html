@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Emotion Detection</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body>
+
+<!-- SPLASH -->
+<div id="splash">
+    <h1>Emotion AI</h1>
+    <p>Smart Emotion Detection System</p>
+</div>
+
+<!-- HOME -->
+<div id="home" class="screen active">
+    <h1 class="app-title">Emotion Detection</h1>
+    <p class="tagline">Understand your emotions instantly</p>
+    <p class="description">
+        Analyze facial expressions using image, webcam, or audio.
+    </p>
+
+    <button onclick="goTo('options')">Get Started</button>
+    <button id="themeToggle" class="theme-btn">🌙</button>
+</div>
+
+<!-- OPTIONS -->
+<div id="options" class="screen hidden">
+    <h2>Select Input</h2>
+    <p class="tagline">Choose how you want to analyze emotions</p>
+
+    <button onclick="goTo('imageScreen')">📷 Image</button>
+    <button onclick="goTo('webcamScreen')">📹 Webcam</button>
+    <button onclick="goTo('audioScreen')">🎤 Audio</button>
+
+    <button onclick="goTo('home')">⬅ Back</button>
+</div>
+
+<!-- IMAGE -->
+<div id="imageScreen" class="screen hidden">
+    <h2>Upload an Image to know your emotion and get personalized suggestions</h2>
+
+    <input type="file" id="imageInput">
+    <button onclick="uploadImage()">Analyze</button>
+
+    <img id="previewImage">
+
+    <button onclick="goTo('options')">⬅ Back</button>
+    <button onclick="openHistory()">📜 History</button>
+</div>
+
+<!-- WEBCAM -->
+<div id="webcamScreen" class="screen hidden">
+    <h2>Webcam for Analyze Emotions in live</h2>
+
+    <div id="webcamBox" class="hidden">
+        <video id="video" autoplay></video>
+        <img id="preview">
+    </div>
+
+    <button onclick="startWebcam()">Start</button>
+    <button onclick="captureImage()">Capture</button>
+    <button onclick="stopWebcam()">Stop</button>
+
+    <button onclick="goTo('options')">⬅ Back</button>
+    <button onclick="openHistory()">📜 History</button>
+</div>
+
+<!-- AUDIO -->
+<div id="audioScreen" class="screen hidden">
+    <h2>Audio Analysis</h2>
+
+    <p id="recordingStatus">Not Recording</p>
+    <p id="timer">00:00</p>
+
+    <canvas id="waveCanvas" width="300" height="80"></canvas>
+
+    <button onclick="startRecording()">🎤 Start</button>
+    <button onclick="stopRecording()">⏹ Stop</button>
+    <button onclick="pauseRecording()">⏸ Pause</button>
+    <button onclick="resumeRecording()">▶ Resume</button>
+
+    <audio id="audioPlayer" controls style="display:none;"></audio>
+    <button onclick="downloadAudio()">⬇ Download</button>
+
+    <button onclick="goTo('options')">⬅ Back</button>
+    <button onclick="openHistory()">📜 History</button>
+</div>
+
+<!-- RESULT -->
+<div id="resultScreen" class="screen hidden">
+    <h2>Result</h2>
+
+    <div class="result-container">
+
+        <img id="resultImage">
+
+        <div class="result-info">
+            <p>Emotion: <b id="emotion"></b></p>
+            <p>Age: <b id="age"></b></p>
+            <p>Gender: <b id="gender"></b></p>
+            <p>Suggestion: <b id="suggestion"></b></p>
+        </div>
+
+        <div class="confidence-section">
+            <p>Emotion Confidence</p>
+            <div class="bar"><div id="emotionBar"></div></div>
+
+            <p>Age Confidence</p>
+            <div class="bar"><div id="ageBar"></div></div>
+        </div>
+
+        <button onclick="goBackFromResult()">⬅ Back</button>
+
+    </div>
+</div>
+
+<!-- HISTORY -->
+<div id="historyPanel" class="history hidden">
+
+    <h3>History</h3>
+
+    <div id="historyItems" class="history-grid"></div>
+
+    <!-- ✅ WRAP BUTTONS -->
+    <div class="history-actions">
+        <button onclick="deleteSelected()">Delete</button>
+        <button onclick="restoreHistory()">Restore</button>
+        <button onclick="closeHistory()">Back</button>
+    </div>
+
+</div>
+
+
+<script src="{{ url_for('static', filename='js/script.js') }}"></script>
+
+</body>
+</html>
