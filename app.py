@@ -68,7 +68,8 @@ def predict_image():
 
     try:
         result = DeepFace.analyze(path, actions=["emotion", "age", "gender"],
-                                  enforce_detection=False)
+                          enforce_detection=False,
+                          detector_backend="opencv")
         if isinstance(result, list):
             result = result[0]
 
