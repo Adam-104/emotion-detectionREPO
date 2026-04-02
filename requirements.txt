@@ -2,9 +2,10 @@ flask
 gunicorn
 deepface
 opencv-python-headless
-numpy
-tensorflow
+numpy==1.24.3
+tensorflow==2.13.0
 librosa
 soundfile
 pydub
 tf-keras
+gdown
