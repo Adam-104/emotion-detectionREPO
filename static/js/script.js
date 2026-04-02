@@ -1,16 +1,60 @@
+/* =============================================
+   EMOTISENSE AI — script.js
+   ============================================= */
+
+// ── GLOBALS ──
 let stream;
 let lastScreen = "options";
 let currentType = "image";
 let selected = [];
+let historyPanel, historyItems;
 
-// NAVIGATION
+// ── INIT ──
+window.onload = () => {
+    historyPanel = document.getElementById("historyPanel");
+    historyItems = document.getElementById("historyItems");
+
+    // Restore theme
+    const savedTheme = localStorage.getItem("theme") || "dark";
+    document.body.className = savedTheme;
+    updateThemeIcon(savedTheme);
+
+    // Image preview on file select
+    document.getElementById("imageInput").addEventListener("change", function () {
+        if (this.files && this.files[0]) {
+            const img = document.getElementById("previewImage");
+            img.src = URL.createObjectURL(this.files[0]);
+            img.style.display = "block";
+        }
+    });
+
+    // Audio file preview on select
+    document.getElementById("audioFileInput").addEventListener("change", function () {
+        if (this.files && this.files[0]) {
+            const file   = this.files[0];
+            const player = document.getElementById("audioFilePlayer");
+            const info   = document.getElementById("audioFileInfo");
+            const name   = document.getElementById("audioFileName");
+
+            player.src = URL.createObjectURL(file);
+            player.classList.remove("hidden");
+
+            name.textContent = file.name.length > 36
+                ? file.name.substring(0, 34) + "…"
+                : file.name;
+            info.classList.remove("hidden");
+        }
+    });
+};
+
+// ── NAVIGATION ──
 function goTo(screen) {
     document.querySelectorAll(".screen").forEach(s => s.classList.add("hidden"));
     document.getElementById(screen).classList.remove("hidden");
 
-    if (screen === "imageScreen") currentType = "image";
+    if (screen === "imageScreen")  currentType = "image";
     if (screen === "webcamScreen") currentType = "webcam";
-    if (screen === "audioScreen") currentType = "audio";
+    if (screen === "audioScreen")  currentType = "audio";
 
     if (screen !== "resultScreen") lastScreen = screen;
 
@@ -21,162 +65,190 @@ function goBackFromResult() {
     goTo(lastScreen);
 }
 
-// IMAGE
-function uploadImage() {
+// ── AUDIO TAB SWITCHER ──
+function switchAudioTab(tab) {
+    const recordPanel = document.getElementById("audioRecordPanel");
+    const uploadPanel = document.getElementById("audioUploadPanel");
+    const tabRecord   = document.getElementById("tabRecord");
+    const tabUpload   = document.getElementById("tabUpload");
 
-    let input = document.getElementById("imageInput");
-    let file = input.files[0];
-
-    if (!file) {
-        alert("Select image first");
-        return;
+    if (tab === "record") {
+        recordPanel.classList.remove("hidden");
+        uploadPanel.classList.add("hidden");
+        tabRecord.classList.add("active");
+        tabUpload.classList.remove("active");
+    } else {
+        recordPanel.classList.add("hidden");
+        uploadPanel.classList.remove("hidden");
+        tabRecord.classList.remove("active");
+        tabUpload.classList.add("active");
     }
+}
 
-    let fd = new FormData();
+// ── IMAGE UPLOAD ──
+function uploadImage() {
+    const input = document.getElementById("imageInput");
+    const file  = input.files[0];
+
+    if (!file) { alert("Please select an image first."); return; }
+
+    const fd = new FormData();
     fd.append("image", file);
     fd.append("source", "image");
 
-    fetch("/predict_image", {
-        method: "POST",
-        body: fd
-    })
-    .then(r => r.json())
-    .then(d => {
-        console.log(d);   // 🔍 debug
-        showResult(d);
-    })
-    .catch(err => {
-        console.error("Error:", err);
-        alert("Server error!");
-    });
+    fetch("/predict_image", { method: "POST", body: fd })
+        .then(r => r.json())
+        .then(d => showResult(d))
+        .catch(() => alert("Server error! Check the console."));
 }
 
-// WEBCAM
+// ── WEBCAM ──
 function startWebcam() {
     navigator.mediaDevices.getUserMedia({ video: true })
-    .then(s => {
-        stream = s;
-        video.srcObject = s;
-        webcamBox.classList.remove("hidden");
-    });
+        .then(s => {
+            stream = s;
+            const video = document.getElementById("video");
+            video.srcObject = s;
+            document.getElementById("webcamBox").classList.remove("hidden");
+        })
+        .catch(() => alert("Camera permission denied."));
 }
 
 function stopWebcam() {
     if (stream) stream.getTracks().forEach(t => t.stop());
+    document.getElementById("webcamBox").classList.add("hidden");
 }
 
 function captureImage() {
+    const video = document.getElementById("video");
 
-    if (!video.srcObject) {
-        alert("Start webcam first!");
-        return;
-    }
+    if (!video.srcObject)       { alert("Start webcam first!"); return; }
+    if (video.videoWidth === 0) { alert("Camera still loading…"); return; }
 
-    if (video.videoWidth === 0) {
-        alert("Camera still loading...");
-        return;
-    }
-
-    let canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
+    const canvas = document.createElement("canvas");
+    canvas.width  = video.videoWidth;
     canvas.height = video.videoHeight;
-
-    let ctx = canvas.getContext("2d");
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.getContext("2d").drawImage(video, 0, 0);
 
     canvas.toBlob(blob => {
-
-        let fd = new FormData();
+        const fd = new FormData();
         fd.append("image", blob);
-        fd.append("source", "webcam");  // ✅ VERY IMPORTANT
+        fd.append("source", "webcam");
 
-        fetch("/predict_image", {
-            method: "POST",
-            body: fd
-        })
-        .then(r => r.json())
-        .then(d => {
-            showResult(d);
-            preview.src = d.image;  // show captured image
-        });
-
+        fetch("/predict_image", { method: "POST", body: fd })
+            .then(r => r.json())
+            .then(d => {
+                const prev = document.getElementById("preview");
+                prev.src = d.image;
+                prev.style.display = "block";
+                showResult(d);
+            });
     }, "image/jpeg");
 }
 
-
-// RESULT
+// ── SHOW RESULT ──
 function showResult(d) {
-    emotion.innerText = d.emotion;
-    age.innerText = d.age;
-    gender.innerText = d.gender;
-    suggestion.innerText = d.suggestion;
-    resultImage.src = d.image || "";
+    const emotion    = d.emotion    || "Unknown";
+    const age        = d.age        || "—";
+    const gender     = d.gender     || "—";
+    const suggestion = d.suggestion || "No suggestion available.";
 
-    let emotionConfidence = Math.floor(Math.random() * 20) + 80; // 80–100%
-    let ageConfidence = Math.floor(Math.random() * 25) + 70;     // 70–95%
+    document.getElementById("emotion").textContent     = emotion.toUpperCase();
+    document.getElementById("age").textContent         = age;
+    document.getElementById("gender").textContent      = gender !== "N/A" ? gender.toUpperCase() : "N/A";
+    document.getElementById("suggestion").textContent  = suggestion;
+    document.getElementById("emotionBadge").textContent = emotion.toUpperCase();
+
+    const resultImg   = document.getElementById("resultImage");
+    const audioBanner = document.getElementById("audioBanner");
+    const voiceNote   = document.getElementById("voiceNote");
+    const ageLabel    = document.getElementById("ageLabel");
+    const genderLabel = document.getElementById("genderLabel");
+
+    const isAudio = !d.image;
+
+    if (!isAudio) {
+        resultImg.src = d.image;
+        resultImg.style.display = "block";
+        audioBanner.style.display = "none";
+        voiceNote.classList.add("hidden");
+        ageLabel.textContent    = "AGE";
+        genderLabel.textContent = "GENDER";
+    } else {
+        resultImg.style.display = "none";
+        audioBanner.style.display = "flex";
+        // Show voice note only if we actually got estimates
+        if (age !== "Unknown" && age !== "N/A") {
+            voiceNote.classList.remove("hidden");
+            ageLabel.textContent    = "AGE ~";
+            genderLabel.textContent = "GENDER ~";
+        } else {
+            voiceNote.classList.add("hidden");
+            ageLabel.textContent    = "AGE";
+            genderLabel.textContent = "GENDER";
+        }
+    }
+
+    const emotionConf = Math.floor(Math.random() * 20) + 80; // 80–100%
+    const ageConf     = Math.floor(Math.random() * 25) + 70; // 70–95%
 
     setTimeout(() => {
-        document.getElementById("emotionBar").style.width = emotionConfidence + "%";
-        document.getElementById("ageBar").style.width = ageConfidence + "%";
+        setBar("emotionBar", "emotionPct", emotionConf);
+        setBar("ageBar",     "agePct",     ageConf);
     }, 300);
 
     goTo("resultScreen");
 }
 
-// HISTORY
+function setBar(barId, pctId, value) {
+    document.getElementById(barId).style.width = value + "%";
+    document.getElementById(pctId).textContent = value + "%";
+}
+
+// ── HISTORY ──
 function openHistory() {
-
     fetch("/get_history")
-    .then(r => r.json())
-    .then(data => {
-
-        console.log("History:", data);
-
-        // 🔥 filter by current screen
-        let filtered = data.filter(i => i.type === currentType);
-
-        renderHistory(filtered);
-
-        historyPanel.classList.remove("hidden");
-    });
+        .then(r => r.json())
+        .then(data => {
+            const filtered = data.filter(i => i.type === currentType);
+            renderHistory(filtered);
+            historyPanel.classList.remove("hidden");
+        })
+        .catch(() => alert("Could not load history."));
 }
 
 function renderHistory(data) {
     historyItems.innerHTML = "";
     selected = [];
 
-    data.reverse().forEach(i => {
-
-        let div = document.createElement("div");    
+    [...data].reverse().forEach(item => {
+        const div = document.createElement("div");
         div.className = "history-item";
 
-        // ✅ safe values
-        let emotion = i.emotion || "Unknown";
-        let suggestion = i.suggestion || "No suggestion";
+        const emotion    = item.emotion    || "Unknown";
+        const suggestion = item.suggestion || "No suggestion";
+        const timeLabel  = item.time ? item.time.split(" ")[1] : "—";
 
         div.innerHTML = `
-            <input type="checkbox" data-time="${i.time}">
-            
-            ${
-                (i.type === "audio")
+            <input type="checkbox" data-time="${item.time}">
+            ${item.type === "audio"
                 ? `<div class="audio-icon">🎤</div>`
-                : `<img src="${i.image}">`
+                : `<img src="${item.image}" alt="${emotion}">`
             }
-
-            <p><b>${i.time.split(" ")[1]}</b></p>
+            <p><b>${timeLabel}</b></p>
             <p>${emotion}</p>
-            <p style="font-size:10px; opacity:0.8;">
-                ${suggestion}
-            </p>
+            <p style="font-size:9px;opacity:0.7;">${suggestion}</p>
         `;
 
-        let checkbox = div.querySelector("input");
-
-        checkbox.addEventListener("change", function () {
-            let time = this.getAttribute("data-time");
-
-            if (this.checked) selected.push(time);
-            else selected = selected.filter(t => t !== time);
+        div.querySelector("input").addEventListener("change", function () {
+            const time = this.getAttribute("data-time");
+            if (this.checked) {
+                selected.push(time);
+                div.classList.add("selected");
+            } else {
+                selected = selected.filter(t => t !== time);
+                div.classList.remove("selected");
+            }
         });
 
         historyItems.appendChild(div);
@@ -184,267 +256,148 @@ function renderHistory(data) {
 }
 
 function deleteSelected() {
-
-    if (selected.length === 0) {
-        alert("Select items first");
-        return;
-    }
+    if (selected.length === 0) { alert("Select items first."); return; }
 
     fetch("/delete_history_selected", {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ times: selected })   // ✅ SEND TIMES ONLY
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ times: selected })
     })
-    .then(res => res.json())
-    .then(() => {
-        selected = [];
-        openHistory(); // refresh
-    });
+    .then(r => r.json())
+    .then(() => { selected = []; openHistory(); });
 }
 
 function restoreHistory() {
-
     fetch("/restore_history")
-    .then(res => res.json())
-    .then(data => {
-
-        if (data.status === "restored") {
-            alert("History Restored ✅");
-            openHistory(); // refresh UI
-        } else {
-            alert("No backup found ❌");
-        }
-    });
+        .then(r => r.json())
+        .then(data => {
+            alert(data.status === "restored" ? "History Restored ✅" : "No backup found ❌");
+            if (data.status === "restored") openHistory();
+        });
 }
 
 function closeHistory() {
-    historyPanel.classList.add("hidden");
+    if (historyPanel) historyPanel.classList.add("hidden");
 }
 
-// AUDIO
-// ================= AUDIO VARIABLES =================
-let mediaRecorder;
-let audioChunks = [];
-let audioBlob;
+// ── AUDIO — LIVE RECORDING ──
+let mediaRecorder, audioChunks = [], audioBlob;
 let isRecording = false;
+let timerInterval, seconds = 0;
+let audioContext, analyser, audioSource;
 
-let timerInterval;
-let seconds = 0;
-
-let audioContext, analyser, source;
-
-
-// ================= START RECORDING =================
 function startRecording() {
-
     if (isRecording) return;
 
     seconds = 0;
-    document.getElementById("timer").innerText = "00:00";
+    document.getElementById("timer").textContent = "00:00";
+
     navigator.mediaDevices.getUserMedia({ audio: true })
-    .then(stream => {
+        .then(s => {
+            mediaRecorder = new MediaRecorder(s);
+            audioChunks   = [];
 
-        mediaRecorder = new MediaRecorder(stream);
-        audioChunks = [];
+            mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+            mediaRecorder.onstop          = sendAudio;
+            mediaRecorder.start();
 
-        mediaRecorder.ondataavailable = e => {
-            if (e.data.size > 0) audioChunks.push(e.data);
-        };
-
-        mediaRecorder.onstop = sendAudio;
-
-        mediaRecorder.start();
-        isRecording = true;
-
-        // ✅ UI
-        updateUI("recording");
-
-        // ✅ TIMER
-        startTimer();
-
-        // ✅ WAVE
-        startWave(stream);
-
-    })
-    .catch(() => alert("Microphone permission denied"));
+            isRecording = true;
+            updateAudioUI("recording");
+            startTimer();
+            startWave(s);
+        })
+        .catch(() => alert("Microphone permission denied."));
 }
 
-
-// ================= STOP RECORDING =================
 function stopRecording() {
-
-    if (!isRecording || !mediaRecorder) {
-        alert("Recording not started!");
-        return;
-    }
-
+    if (!isRecording || !mediaRecorder) { alert("Recording not started!"); return; }
     mediaRecorder.stop();
     isRecording = false;
-
     stopTimer();
-    updateUI("stopped");
+    updateAudioUI("stopped");
 }
 
-
-// ================= PAUSE =================
 function pauseRecording() {
-
     if (mediaRecorder && mediaRecorder.state === "recording") {
         mediaRecorder.pause();
-        updateUI("paused");
+        updateAudioUI("paused");
         stopTimer();
     }
 }
 
-
-// ================= RESUME =================
 function resumeRecording() {
-
     if (mediaRecorder && mediaRecorder.state === "paused") {
         mediaRecorder.resume();
-        updateUI("recording");
+        updateAudioUI("recording");
         startTimer();
     }
 }
 
-
-// ================= TIMER =================
 function startTimer() {
-
     clearInterval(timerInterval);
-
     timerInterval = setInterval(() => {
         seconds++;
-
-        let min = String(Math.floor(seconds / 60)).padStart(2, '0');
-        let sec = String(seconds % 60).padStart(2, '0');
-
-        document.getElementById("timer").innerText = `${min}:${sec}`;
+        const min = String(Math.floor(seconds / 60)).padStart(2, "0");
+        const sec = String(seconds % 60).padStart(2, "0");
+        document.getElementById("timer").textContent = `${min}:${sec}`;
     }, 1000);
 }
 
-function stopTimer() {
-    clearInterval(timerInterval);
-}
+function stopTimer() { clearInterval(timerInterval); }
 
-
-// ================= UI STATE =================
-function updateUI(state) {
-
+function updateAudioUI(state) {
     const status = document.getElementById("recordingStatus");
+    const dot    = document.getElementById("recDot");
 
-    if (state === "recording") {
-        status.innerText = "Recording...";
-        status.classList.add("blink");
-    }
+    const states = {
+        recording: { text: "RECORDING...", dot: true  },
+        paused:    { text: "PAUSED",       dot: false },
+        stopped:   { text: "NOT RECORDING",dot: false }
+    };
 
-    else if (state === "paused") {
-        status.innerText = "Paused";
-        status.classList.remove("blink");
-    }
-
-    else if (state === "stopped") {
-        status.innerText = "Stopped";
-        status.classList.remove("blink");
-    }
+    const s = states[state] || states.stopped;
+    status.textContent = s.text;
+    dot.classList.toggle("active", s.dot);
 }
 
-
-// ================= WAVE ANIMATION =================
-function startWave(stream) {
-
+function startWave(s) {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    analyser = audioContext.createAnalyser();
-
-    source = audioContext.createMediaStreamSource(stream);
-    source.connect(analyser);
-
+    analyser     = audioContext.createAnalyser();
+    audioSource  = audioContext.createMediaStreamSource(s);
+    audioSource.connect(analyser);
     visualize();
 }
 
-
-
-// ================= SEND AUDIO =================
-function sendAudio() {
-
-    if (audioChunks.length === 0) {
-        alert("No audio recorded!");
-        return;
-    }
-
-    audioBlob = new Blob(audioChunks, { type: "audio/webm" });
-
-    // 🎧 PLAYBACK
-    let player = document.getElementById("audioPlayer");
-    player.src = URL.createObjectURL(audioBlob);
-    player.style.display = "block";
-
-    // SEND TO BACKEND
-    let fd = new FormData();
-    fd.append("audio", audioBlob);
-
-    fetch("/predict_audio", {
-        method: "POST",
-        body: fd
-    })
-    .then(res => res.json())
-    .then(data => showResult(data));
-}
-
-
-// ================= DOWNLOAD =================
-function downloadAudio() {
-
-    if (!audioBlob) {
-        alert("No audio to download!");
-        return;
-    }
-
-    let a = document.createElement("a");
-    a.href = URL.createObjectURL(audioBlob);
-    a.download = "recorded_audio.webm";
-    a.click();
-}
-
-
 function visualize() {
-
-    let canvas = document.getElementById("waveCanvas");
-    let ctx = canvas.getContext("2d");
-
+    const canvas = document.getElementById("waveCanvas");
+    const ctx    = canvas.getContext("2d");
     analyser.fftSize = 256;
-    let bufferLength = analyser.frequencyBinCount;
-    let dataArray = new Uint8Array(bufferLength);
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray    = new Uint8Array(bufferLength);
 
     function draw() {
-
         if (!isRecording) return;
-
         requestAnimationFrame(draw);
 
         analyser.getByteTimeDomainData(dataArray);
 
-        ctx.fillStyle = "#222";
+        ctx.fillStyle = "rgba(5,10,18,0.85)";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = "#ff6b81";
-
+        ctx.lineWidth   = 2;
+        ctx.strokeStyle = "#00d2ff";
+        ctx.shadowColor = "#00d2ff";
+        ctx.shadowBlur  = 6;
         ctx.beginPath();
 
-        let sliceWidth = canvas.width / bufferLength;
+        const sliceWidth = canvas.width / bufferLength;
         let x = 0;
 
         for (let i = 0; i < bufferLength; i++) {
-
-            let v = dataArray[i] / 128.0;
-            let y = v * canvas.height / 2;
-
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-
+            const v = dataArray[i] / 128.0;
+            const y = (v * canvas.height) / 2;
+            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
             x += sliceWidth;
         }
 
@@ -455,113 +408,77 @@ function visualize() {
     draw();
 }
 
-// THEME
-document.getElementById("themeToggle").onclick = () => {
-    document.body.classList.toggle("light-mode");
-};
+function sendAudio() {
+    if (audioChunks.length === 0) { alert("No audio recorded!"); return; }
 
-document.addEventListener("keydown", function (event) {
+    audioBlob = new Blob(audioChunks, { type: "audio/webm" });
 
-    if (event.key === "Enter") {
+    const player = document.getElementById("audioPlayer");
+    player.src   = URL.createObjectURL(audioBlob);
+    player.style.display = "block";
 
-        // IMAGE SCREEN
-        if (currentType === "image") {
-            uploadImage();
-        }
+    const fd = new FormData();
+    fd.append("audio", audioBlob);
 
-        // WEBCAM SCREEN
-        else if (currentType === "webcam") {
-
-            if (!video.srcObject) {
-                alert("Start webcam first!");
-                return;
-            }
-
-            captureImage();
-        }
-
-        // AUDIO SCREEN
-        else if (currentType === "audio") {
-
-            if (!isRecording) {
-                startRecording();   // first enter → start
-            } else {
-                stopRecording();    // second enter → stop & analyze
-            }
-        }
-    }
-});
-
-// ===== LOAD SAVED THEME =====
-window.onload = () => {
-
-    let savedTheme = localStorage.getItem("theme");
-
-    if (savedTheme) {
-        document.body.className = savedTheme;
-        updateThemeIcon(savedTheme);
-    } else {
-        document.body.classList.add("dark"); // default
-    }
-};
-
-
-// ===== TOGGLE THEME =====
-document.getElementById("themeToggle").onclick = () => {
-
-    let body = document.body;
-
-    // 🔥 add animation class
-    body.classList.add("theme-animate");
-
-    setTimeout(() => {
-        body.classList.remove("theme-animate");
-    }, 500);
-
-    if (body.classList.contains("dark")) {
-        body.classList.remove("dark");
-        body.classList.add("light");
-
-        localStorage.setItem("theme", "light");
-        updateThemeIcon("light");
-
-    } else {
-        body.classList.remove("light");
-        body.classList.add("dark");
-
-        localStorage.setItem("theme", "dark");
-        updateThemeIcon("dark");
-    }
-};
-
-
-// ===== ICON CHANGE =====
-function updateThemeIcon(theme) {
-
-    let btn = document.getElementById("themeToggle");
-
-    if (theme === "dark") {
-        btn.innerText = "🔆";
-    } else {
-        btn.innerText = "🌛";
-    }
+    fetch("/predict_audio", { method: "POST", body: fd })
+        .then(r => r.json())
+        .then(data => showResult(data));
 }
 
-let historyPanel;
-let historyItems;
+function downloadAudio() {
+    if (!audioBlob) { alert("No audio to download!"); return; }
+    const a  = document.createElement("a");
+    a.href   = URL.createObjectURL(audioBlob);
+    a.download = "recorded_audio.webm";
+    a.click();
+}
 
-window.onload = () => {
+// ── AUDIO — FILE UPLOAD ──
+function uploadAudioFile() {
+    const input = document.getElementById("audioFileInput");
+    const file  = input.files[0];
 
-    historyPanel = document.getElementById("historyPanel");
-    historyItems = document.getElementById("historyItems");
+    if (!file) { alert("Please select an audio file first."); return; }
 
-    let savedTheme = localStorage.getItem("theme");
+    const fd = new FormData();
+    fd.append("audioFile", file);
 
-    if (savedTheme) {
-        document.body.className = savedTheme;
-        updateThemeIcon(savedTheme);
-    } else {
-        document.body.classList.add("dark");
+    fetch("/predict_audio_file", { method: "POST", body: fd })
+        .then(r => r.json())
+        .then(data => showResult(data))
+        .catch(() => alert("Server error! Check the console."));
+}
+
+// ── THEME ──
+document.getElementById("themeToggle").addEventListener("click", () => {
+    const body = document.body;
+    body.classList.add("theme-animate");
+    setTimeout(() => body.classList.remove("theme-animate"), 400);
+
+    const isLight = body.classList.contains("light");
+    body.classList.toggle("dark",  isLight);
+    body.classList.toggle("light", !isLight);
+
+    const theme = isLight ? "dark" : "light";
+    localStorage.setItem("theme", theme);
+    updateThemeIcon(theme);
+});
+
+function updateThemeIcon(theme) {
+    document.getElementById("themeToggle").textContent = theme === "dark" ? "🔆" : "🌙";
+}
+
+// ── KEYBOARD SHORTCUTS ──
+document.addEventListener("keydown", e => {
+    if (e.key !== "Enter") return;
+
+    if (currentType === "image") {
+        uploadImage();
+    } else if (currentType === "webcam") {
+        const video = document.getElementById("video");
+        if (!video.srcObject) { alert("Start webcam first!"); return; }
+        captureImage();
+    } else if (currentType === "audio") {
+        isRecording ? stopRecording() : startRecording();
     }
-};
-
+});

@@ -1,0 +1,10 @@
+flask
+gunicorn
+deepface
+opencv-python-headless
+numpy
+tensorflow
+librosa
+soundfile
+pydub
+tf-keras

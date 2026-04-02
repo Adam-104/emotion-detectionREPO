@@ -760,13 +760,313 @@
         "suggestion": "Stay positive!"
     },
     {
-        "id": "8a0cb508-8caf-437f-9b75-c87c02ccdee9",
-        "time": "2026-03-31 18:59:41",
+        "id": "a9e44ef5-a099-4ddb-a898-e6f6099dd2c9",
+        "time": "2026-04-01 20:27:08",
+        "type": "image",
+        "image": "/static/uploads/1775055426049.jpg",
+        "emotion": "sad",
+        "age": 30,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "fbef24ed-7c00-4c57-a831-4e0d587bd888",
+        "time": "2026-04-01 20:27:50",
+        "type": "image",
+        "image": "/static/uploads/1775055468636.jpg",
+        "emotion": "sad",
+        "age": 25,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "27910988-6ead-47d3-945d-c8a6837bcc13",
+        "time": "2026-04-02 08:18:34",
         "type": "webcam",
-        "image": "/static/uploads/1774963779866.jpg",
+        "image": "/static/uploads/1775098113675.jpg",
+        "emotion": "neutral",
+        "age": 27,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "ca07fc43-b20c-4512-aec2-b53ffa4e00b3",
+        "time": "2026-04-02 08:19:38",
+        "type": "audio",
+        "emotion": "Angry",
+        "age": "N/A",
+        "gender": "N/A",
+        "suggestion": "Voice analysis",
+        "image": ""
+    },
+    {
+        "id": "7a9486e2-af24-4659-be21-66aa80b56d22",
+        "time": "2026-04-02 08:25:32",
+        "type": "webcam",
+        "image": "/static/uploads/1775098530789.jpg",
+        "emotion": "neutral",
+        "age": 28,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "84814e33-73b4-4e81-8b94-70f7c007d830",
+        "time": "2026-04-02 08:26:22",
+        "type": "audio",
+        "emotion": "Angry",
+        "age": "N/A",
+        "gender": "N/A",
+        "suggestion": "Voice analysis",
+        "image": ""
+    },
+    {
+        "id": "273b90ce-7a3e-42d5-8e32-b1377f628e76",
+        "time": "2026-04-02 08:26:56",
+        "type": "image",
+        "image": "/static/uploads/1775098615275.jpg",
+        "emotion": "neutral",
+        "age": 42,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "afb53258-0804-4332-91ad-86d811db745c",
+        "time": "2026-04-02 08:27:19",
+        "type": "image",
+        "image": "/static/uploads/1775098638422.jpg",
+        "emotion": "neutral",
+        "age": 42,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "c495f8cd-faba-467e-965e-5cb62ff44374",
+        "time": "2026-04-02 08:30:52",
+        "type": "image",
+        "image": "/static/uploads/1775098851136.jpg",
         "emotion": "angry",
+        "age": 33,
+        "gender": "Female",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "d5a39e91-3f1c-4e4e-a4e3-a7729f8dd913",
+        "time": "2026-04-02 08:33:54",
+        "type": "image",
+        "image": "/static/uploads/1775099020970.jpg",
+        "emotion": "surprise",
+        "age": 13,
+        "gender": "Female",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "8a9b17bc-f052-4221-b52f-0c3d4cc533b3",
+        "time": "2026-04-02 08:33:55",
+        "type": "image",
+        "image": "/static/uploads/1775099025489.jpg",
+        "emotion": "surprise",
+        "age": 13,
+        "gender": "Female",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "5dc2bac0-1d91-4b26-a413-d8c8ec9a0cfb",
+        "time": "2026-04-02 08:38:14",
+        "type": "image",
+        "image": "/static/uploads/1775099293349.jpg",
+        "emotion": "angry",
+        "age": 35,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "935add94-b436-4fcd-9bf4-d90625e4d4ae",
+        "time": "2026-04-02 08:41:43",
+        "type": "image",
+        "image": "/static/uploads/1775099502396.jpg",
+        "emotion": "angry",
+        "age": 33,
+        "gender": "Female",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "b9e7afaf-94b7-4110-9d77-62bf10cceba9",
+        "time": "2026-04-02 08:42:11",
+        "type": "image",
+        "image": "/static/uploads/1775099530538.jpg",
+        "emotion": "angry",
+        "age": 30,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "1ccb4d6c-b255-4bf4-923b-0792c1aaa539",
+        "time": "2026-04-02 08:46:16",
+        "type": "image",
+        "image": "/static/uploads/1775099775465.jpg",
+        "emotion": "sad",
+        "age": 30,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "a7f09a7d-2b32-4f70-b2bc-a69e784fa7ee",
+        "time": "2026-04-02 08:47:00",
+        "type": "webcam",
+        "image": "/static/uploads/1775099819441.jpg",
+        "emotion": "neutral",
+        "age": 29,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "9d082d1e-3037-47f1-9c30-89263c6682c6",
+        "time": "2026-04-02 08:47:56",
+        "type": "audio",
+        "emotion": "Angry",
+        "age": "N/A",
+        "gender": "N/A",
+        "suggestion": "Voice analysis",
+        "image": ""
+    },
+    {
+        "id": "69ce973b-aa4a-4d60-9e89-ac600c568451",
+        "time": "2026-04-02 09:06:07",
+        "type": "image",
+        "image": "/static/uploads/1775100963441.jpg",
+        "emotion": "sad",
+        "age": 25,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "6b07955e-e1d2-4e58-bbc8-72e8b759e419",
+        "time": "2026-04-02 09:17:23",
+        "type": "webcam",
+        "image": "/static/uploads/1775101642093.jpg",
+        "emotion": "neutral",
+        "age": 27,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "93f090d9-845c-48f1-a09c-51fb4b940563",
+        "time": "2026-04-02 09:23:20",
+        "type": "audio",
+        "emotion": "Sad",
+        "age": "N/A",
+        "gender": "N/A",
+        "suggestion": "Voice analysis",
+        "image": ""
+    },
+    {
+        "id": "87daedb9-9757-4c37-b2d3-4c6b4e51a994",
+        "time": "2026-04-02 11:52:02",
+        "type": "webcam",
+        "image": "/static/uploads/1775110919586.jpg",
+        "emotion": "sad",
+        "age": 30,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "d525b4ec-daba-4e3b-8c21-64989b495131",
+        "time": "2026-04-02 11:52:15",
+        "type": "webcam",
+        "image": "/static/uploads/1775110933401.jpg",
+        "emotion": "sad",
         "age": 26,
         "gender": "Male",
         "suggestion": "Stay positive!"
+    },
+    {
+        "id": "64294404-0e0b-4fd9-86d8-8a927437b48e",
+        "time": "2026-04-02 11:52:25",
+        "type": "webcam",
+        "image": "/static/uploads/1775110943691.jpg",
+        "emotion": "happy",
+        "age": 30,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "9bd54297-3d60-4419-8c87-d34cc1cb39b9",
+        "time": "2026-04-02 11:52:44",
+        "type": "webcam",
+        "image": "/static/uploads/1775110963159.jpg",
+        "emotion": "neutral",
+        "age": 37,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "f7ebc9b5-49ed-459f-9e67-69ff3fd0c8dd",
+        "time": "2026-04-02 12:45:10",
+        "type": "image",
+        "image": "/static/uploads/1775114108256.jpg",
+        "emotion": "sad",
+        "age": 25,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "204ad6f6-94e9-4447-842d-1baddb7da05d",
+        "time": "2026-04-02 12:45:36",
+        "type": "image",
+        "image": "/static/uploads/1775114135298.jpg",
+        "emotion": "sad",
+        "age": 30,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "86827cab-f602-4981-92e7-bbe78d0fa8fb",
+        "time": "2026-04-02 12:48:04",
+        "type": "webcam",
+        "image": "/static/uploads/1775114282736.jpg",
+        "emotion": "neutral",
+        "age": 28,
+        "gender": "Male",
+        "suggestion": "Stay positive!"
+    },
+    {
+        "id": "1cd79711-0b85-4b9d-b82f-273986ccee8c",
+        "time": "2026-04-02 12:53:24",
+        "type": "audio",
+        "emotion": "Angry",
+        "age": "N/A",
+        "gender": "N/A",
+        "suggestion": "Voice analysis",
+        "image": ""
+    },
+    {
+        "id": "a7f4c26a-bf3e-4ee9-8939-202eac772f53",
+        "time": "2026-04-02 14:10:27",
+        "type": "audio",
+        "emotion": "Angry",
+        "age": "N/A",
+        "gender": "N/A",
+        "suggestion": "Take a deep breath. Things will get better. \ud83e\uddd8",
+        "image": ""
+    },
+    {
+        "id": "71219915-76f4-4181-a0be-911a09470d79",
+        "time": "2026-04-02 14:18:37",
+        "type": "audio",
+        "emotion": "Angry",
+        "age": "77",
+        "gender": "Male",
+        "suggestion": "Take a deep breath. Things will get better. \ud83e\uddd8",
+        "image": ""
+    },
+    {
+        "id": "5ca69fcc-e25e-44c0-854a-6762db74fb3d",
+        "time": "2026-04-02 14:21:11",
+        "type": "webcam",
+        "image": "/static/uploads/1775119867926.jpg",
+        "emotion": "neutral",
+        "age": 27,
+        "gender": "Male",
+        "suggestion": "Stay positive and keep moving forward! \u2728"
     }
 ]
