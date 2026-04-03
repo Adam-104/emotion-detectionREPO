@@ -38,7 +38,7 @@ html, body {
   font-family: 'DM Sans', sans-serif;
   background: var(--bg);
   color: var(--text);
-  overflow: hidden;
+  overflow: auto;
   transition: background 0.4s, color 0.4s;
 }
 
@@ -481,7 +481,7 @@ body.light .main-title {
     border: 1px solid var(--border);
     border-radius: 20px;
     background: var(--card-bg);
-    overflow: hidden;
+    overflow: visible;
     backdrop-filter: blur(20px);
 }
 
