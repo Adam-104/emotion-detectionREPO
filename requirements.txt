@@ -1,11 +1,12 @@
 flask
 gunicorn
-deepface
+deepface==0.0.79
 opencv-python-headless
 numpy==1.24.3
-tensorflow==2.13.0
+tensorflow-cpu==2.13.0
+tf-keras
 librosa
 soundfile
 pydub
-tf-keras
 gdown
+pymongo[srv]
