@@ -10,10 +10,30 @@ from deepface import DeepFace
 from utils.audio_emotion import predict_audio_emotion
 from utils.audio_age_gender import predict_age_gender
 from pydub import AudioSegment
+import gdown
+
+# ─────────────── AUTO-DOWNLOAD MODELS ───────────────
+
+EMOTION_MODEL_PATH = "models/emotion_model.hdf5"
+EMOTION_MODEL_ID   = "1NZEJZSQb3A5dGZJlqlNt3Tm4tuzExDSY"
+
+os.makedirs("models", exist_ok=True)
+
+if not os.path.exists(EMOTION_MODEL_PATH):
+    print("Downloading emotion model from Google Drive...")
+    gdown.download(
+        f"https://drive.google.com/uc?id={EMOTION_MODEL_ID}",
+        EMOTION_MODEL_PATH,
+        quiet=False
+    )
+    print("Emotion model downloaded successfully.")
+else:
+    print("Emotion model already exists, skipping download.")
+
+# ─────────────── FLASK APP ───────────────
 
 app = Flask(__name__)
 
-# ─────────────── CONFIG ───────────────
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 
 UPLOAD_FOLDER = "static/uploads"
@@ -21,7 +41,6 @@ HISTORY_FILE  = "history.json"
 BACKUP_FILE   = "backup_history.json"
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs("models", exist_ok=True)
 
 # ─────────────── SUGGESTION MAP ───────────────
 SUGGESTIONS = {
