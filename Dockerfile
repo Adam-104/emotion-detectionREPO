@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y \
     libxrender-dev \
     libgomp1 \
     libgl1-mesa-glx \
+    libopenblas-dev \
+    cmake \
+    build-essential \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

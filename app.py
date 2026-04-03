@@ -4,33 +4,40 @@ os.environ["CUDA_VISIBLE_DEVICES"]  = "-1"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 from flask import Flask, render_template, request, jsonify
-import json, uuid, time
+import json, uuid, time, cv2
+import numpy as np
 from datetime import datetime
-from deepface import DeepFace
+from hsemotion_onnx.facial_emotions import HSEmotionRecognizer
 from utils.audio_emotion import predict_audio_emotion
-from utils.audio_age_gender import predict_age_gender
+from utils.audio_age_gender import predict_age_gender as audio_age_gender
 from pydub import AudioSegment
-import gdown
 
-# ─────────────── AUTO-DOWNLOAD MODELS ───────────────
+# ─────────────── LOAD HSEMOTION ───────────────
+# Using B0 — stable download, ~78% accuracy
+print("Loading HSEmotion model...")
+fer = HSEmotionRecognizer(model_name='enet_b0_8_best_afew')
+print("HSEmotion loaded.")
 
-EMOTION_MODEL_PATH = "models/emotion_model.hdf5"
-EMOTION_MODEL_ID   = "1NZEJZSQb3A5dGZJlqlNt3Tm4tuzExDSY"
+# ─────────────── LOAD INSIGHTFACE (with fallback) ───────────────
+INSIGHTFACE_AVAILABLE = False
+face_app = None
 
-os.makedirs("models", exist_ok=True)
-
-if not os.path.exists(EMOTION_MODEL_PATH):
-    print("Downloading emotion model from Google Drive...")
-    url = f"https://drive.google.com/uc?id={EMOTION_MODEL_ID}&confirm=t"
-    gdown.download(url, EMOTION_MODEL_PATH, quiet=False, fuzzy=True)
-    print("Emotion model downloaded successfully.")
-else:
-    print("Emotion model already exists, skipping download.")
+try:
+    from insightface.app import FaceAnalysis
+    print("Loading InsightFace model...")
+    face_app = FaceAnalysis(
+        name="buffalo_sc",
+        providers=["CPUExecutionProvider"]
+    )
+    face_app.prepare(ctx_id=-1, det_size=(640, 640))
+    INSIGHTFACE_AVAILABLE = True
+    print("InsightFace loaded. Age/gender: InsightFace mode.")
+except Exception as e:
+    print(f"InsightFace not available ({e}), falling back to DeepFace.")
+    from deepface import DeepFace
 
 # ─────────────── FLASK APP ───────────────
-
 app = Flask(__name__)
-
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 
 UPLOAD_FOLDER = "static/uploads"
@@ -38,21 +45,109 @@ HISTORY_FILE  = "history.json"
 BACKUP_FILE   = "backup_history.json"
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs("models", exist_ok=True)
 
 # ─────────────── SUGGESTION MAP ───────────────
 SUGGESTIONS = {
-    "happy":    "Keep spreading that positive energy! 😊",
-    "sad":      "It's okay to feel low — take it one step at a time. 💙",
-    "angry":    "Take a deep breath. Things will get better. 🧘",
-    "surprise": "Life is full of surprises — embrace them! 🌟",
-    "fear":     "You're braver than you think. Face it step by step. 💪",
-    "disgust":  "Try to shift focus to something you enjoy. 🌿",
-    "neutral":  "Stay positive and keep moving forward! ✨",
-    "contempt": "Practice empathy — it can change perspectives. 🤝",
+    "happy":      "Keep spreading that positive energy! 😊",
+    "sad":        "It's okay to feel low — take it one step at a time. 💙",
+    "angry":      "Take a deep breath. Things will get better. 🧘",
+    "surprise":   "Life is full of surprises — embrace them! 🌟",
+    "fear":       "You're braver than you think. Face it step by step. 💪",
+    "disgust":    "Try to shift focus to something you enjoy. 🌿",
+    "neutral":    "Stay positive and keep moving forward! ✨",
+    "contempt":   "Practice empathy — it can change perspectives. 🤝",
+    "excitement": "Channel that energy into something creative! 🔥",
 }
 
 def get_suggestion(emotion):
     return SUGGESTIONS.get(emotion.lower(), "Keep going — every emotion is valid! 💫")
+
+# ─────────────── FACE DETECTION ───────────────
+face_cascade = cv2.CascadeClassifier(
+    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+)
+
+def detect_face_crop(img_bgr):
+    """Returns largest face crop with padding, or full image as fallback."""
+    gray  = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    faces = face_cascade.detectMultiScale(
+        gray, scaleFactor=1.1, minNeighbors=5, minSize=(48, 48)
+    )
+    if len(faces) == 0:
+        return img_bgr
+    x, y, w, h = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)[0]
+    pad = int(0.2 * min(w, h))
+    x1  = max(0, x - pad)
+    y1  = max(0, y - pad)
+    x2  = min(img_bgr.shape[1], x + w + pad)
+    y2  = min(img_bgr.shape[0], y + h + pad)
+    return img_bgr[y1:y2, x1:x2]
+
+# ─────────────── EMOTION — HSEmotion ───────────────
+
+def predict_emotion(image_path):
+    """Predict emotion using HSEmotion EfficientNet-B0 (~78% accuracy)."""
+    try:
+        img_bgr   = cv2.imread(image_path)
+        if img_bgr is None:
+            return "neutral", 0.0
+        face_crop = detect_face_crop(img_bgr)
+        face_rgb  = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
+        emotion, scores = fer.predict_emotions(face_rgb, logits=False)
+        confidence = round(float(max(scores)) * 100, 1)
+        return emotion.lower(), confidence
+    except Exception as e:
+        print(f"Emotion error: {e}")
+        return "neutral", 0.0
+
+# ─────────────── AGE & GENDER ───────────────
+
+def get_age_gender(image_path):
+    """
+    InsightFace if available (97% gender, ±4yr age),
+    otherwise DeepFace fallback.
+    """
+    if INSIGHTFACE_AVAILABLE and face_app is not None:
+        try:
+            img   = cv2.imread(image_path)
+            faces = face_app.get(img)
+
+            if not faces:
+                # Retry with resized image
+                img_r = cv2.resize(img, (640, 640))
+                faces = face_app.get(img_r)
+
+            if faces:
+                face   = sorted(
+                    faces,
+                    key=lambda f: (f.bbox[2]-f.bbox[0]) * (f.bbox[3]-f.bbox[1]),
+                    reverse=True
+                )[0]
+                age    = int(face.age)
+                gender = "Male" if face.gender == 1 else "Female"
+                return age, gender
+        except Exception as e:
+            print(f"InsightFace age/gender error: {e}")
+
+    # DeepFace fallback
+    try:
+        result = DeepFace.analyze(
+            image_path,
+            actions=["age", "gender"],
+            enforce_detection=False,
+            detector_backend="opencv",
+            silent=True
+        )
+        if isinstance(result, list):
+            result = result[0]
+        age        = max(1, int(result.get("age", 25)) - 3)
+        gender_raw = result.get("dominant_gender", "unknown").lower()
+        gender     = "Male" if gender_raw == "man" else "Female"
+        return age, gender
+    except Exception as e:
+        print(f"DeepFace age/gender error: {e}")
+        return "N/A", "N/A"
 
 # ─────────────── HISTORY UTILS ───────────────
 
@@ -101,25 +196,13 @@ def predict_image():
     file.save(path)
 
     try:
-        result = DeepFace.analyze(
-            path,
-            actions=["emotion", "age", "gender"],
-            enforce_detection=False,
-            detector_backend="opencv",
-            silent=True
-        )
-        if isinstance(result, list):
-            result = result[0]
-
-        emotion    = result["dominant_emotion"]
-        age        = int(result.get("age", 0))
-        gender_raw = result.get("dominant_gender", "unknown").lower()
-        gender     = "Male" if gender_raw == "man" else "Female"
-        suggestion = get_suggestion(emotion)
-
+        emotion, confidence = predict_emotion(path)
+        age, gender         = get_age_gender(path)
+        suggestion          = get_suggestion(emotion)
     except Exception as e:
-        print("Image Error:", e)
+        print("Predict error:", e)
         emotion, age, gender = "No Face", "N/A", "N/A"
+        confidence = 0.0
         suggestion = "Could not detect a face. Try a clearer image."
 
     entry = {
@@ -130,6 +213,7 @@ def predict_image():
         "emotion":    emotion,
         "age":        age,
         "gender":     gender,
+        "confidence": confidence,
         "suggestion": suggestion,
     }
     save_history(entry)
@@ -147,27 +231,22 @@ def predict_audio():
         filename  = str(int(time.time() * 1000))
         webm_path = os.path.join(UPLOAD_FOLDER, filename + ".webm")
         wav_path  = os.path.join(UPLOAD_FOLDER, filename + ".wav")
-
         file.save(webm_path)
         convert_to_wav(webm_path, wav_path)
-
-        emotion     = predict_audio_emotion(wav_path)
-        gender, age = predict_age_gender(wav_path)
-
+        emotion          = predict_audio_emotion(wav_path)
+        a_gender, a_age  = audio_age_gender(wav_path)
     except Exception as e:
         print("Audio Error:", e)
-        emotion, age, gender = "Neutral", "Unknown", "Unknown"
-
-    suggestion = get_suggestion(emotion)
+        emotion, a_age, a_gender = "Neutral", "Unknown", "Unknown"
 
     entry = {
         "id":         str(uuid.uuid4()),
         "time":       datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "type":       "audio",
         "emotion":    emotion,
-        "age":        age,
-        "gender":     gender,
-        "suggestion": suggestion,
+        "age":        a_age,
+        "gender":     a_gender,
+        "suggestion": get_suggestion(emotion),
         "image":      "",
     }
     save_history(entry)
@@ -186,31 +265,25 @@ def predict_audio_file():
         filename = str(int(time.time() * 1000))
         raw_path = os.path.join(UPLOAD_FOLDER, filename + ext)
         wav_path = os.path.join(UPLOAD_FOLDER, filename + ".wav")
-
         file.save(raw_path)
-
         if ext != ".wav":
             convert_to_wav(raw_path, wav_path)
         else:
             wav_path = raw_path
-
-        emotion     = predict_audio_emotion(wav_path)
-        gender, age = predict_age_gender(wav_path)
-
+        emotion          = predict_audio_emotion(wav_path)
+        a_gender, a_age  = audio_age_gender(wav_path)
     except Exception as e:
         print("Audio File Error:", e)
-        emotion, age, gender = "Neutral", "Unknown", "Unknown"
-
-    suggestion = get_suggestion(emotion)
+        emotion, a_age, a_gender = "Neutral", "Unknown", "Unknown"
 
     entry = {
         "id":         str(uuid.uuid4()),
         "time":       datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "type":       "audio",
         "emotion":    emotion,
-        "age":        age,
-        "gender":     gender,
-        "suggestion": suggestion,
+        "age":        a_age,
+        "gender":     a_gender,
+        "suggestion": get_suggestion(emotion),
         "image":      "",
     }
     save_history(entry)
@@ -227,27 +300,23 @@ def delete_history_selected():
     data    = request.get_json()
     times   = data.get("times", [])
     history = load_history()
-
     try:
         with open(BACKUP_FILE, "w") as f:
             json.dump(history, f, indent=4)
     except IOError as e:
         print("Backup error:", e)
-
-    new_history = [item for item in history if item["time"] not in times]
+    new_history = [i for i in history if i["time"] not in times]
     try:
         with open(HISTORY_FILE, "w") as f:
             json.dump(new_history, f, indent=4)
     except IOError as e:
         print("Delete error:", e)
-
     return jsonify({"status": "deleted"})
 
 @app.route("/restore_history")
 def restore_history():
     if not os.path.exists(BACKUP_FILE):
         return jsonify({"status": "no_backup"})
-
     try:
         with open(BACKUP_FILE, "r") as f:
             data = json.load(f)
@@ -256,7 +325,6 @@ def restore_history():
     except (json.JSONDecodeError, IOError) as e:
         print("Restore error:", e)
         return jsonify({"status": "error"})
-
     return jsonify({"status": "restored"})
 
 # ─────────────── RUN ───────────────

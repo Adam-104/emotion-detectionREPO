@@ -8,5 +8,6 @@ tf-keras
 librosa
 soundfile
 pydub
-gdown
-pymongo[srv]
+hsemotion-onnx
+onnxruntime
+insightface
