@@ -112,3 +112,23 @@ python app.py
 - **Audio:** librosa, pydub, ffmpeg, custom Keras model
 - **Frontend:** Vanilla JS, CSS custom properties
 - **Deployment:** Render.com
+
+---
+title: EmotiSense AI
+emoji: 🧠
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+app_port: 7860
+---
+
+# EmotiSense AI
+
+A real-time facial and audio emotion detection web application built with Flask and DeepFace.
+
+## Features
+- Image emotion detection
+- Live webcam analysis
+- Audio emotion recognition
+- Analysis history
