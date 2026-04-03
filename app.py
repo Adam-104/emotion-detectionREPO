@@ -21,11 +21,8 @@ os.makedirs("models", exist_ok=True)
 
 if not os.path.exists(EMOTION_MODEL_PATH):
     print("Downloading emotion model from Google Drive...")
-    gdown.download(
-        f"https://drive.google.com/uc?id={EMOTION_MODEL_ID}",
-        EMOTION_MODEL_PATH,
-        quiet=False
-    )
+    url = f"https://drive.google.com/uc?id={EMOTION_MODEL_ID}&confirm=t"
+    gdown.download(url, EMOTION_MODEL_PATH, quiet=False, fuzzy=True)
     print("Emotion model downloaded successfully.")
 else:
     print("Emotion model already exists, skipping download.")
