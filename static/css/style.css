@@ -474,11 +474,15 @@ body.light .main-title {
 
 /* ── RESULT CARD ── */
 .result-card {
-  width: 100%; max-width: 480px;
-  border: 1px solid var(--border);
-  border-radius: 20px; background: var(--card-bg);
-  overflow: hidden;
-  backdrop-filter: blur(20px);
+    width: 100%;
+    max-width: 420px;
+    max-height: 90vh;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: var(--card-bg);
+    overflow: hidden;
+    backdrop-filter: blur(20px);
 }
 
 .result-image-wrap {
