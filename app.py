@@ -10,8 +10,6 @@ from deepface import DeepFace
 from utils.audio_emotion import predict_audio_emotion
 from utils.audio_age_gender import predict_age_gender
 from pydub import AudioSegment
-from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure
 
 app = Flask(__name__)
 
@@ -19,31 +17,11 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 
 UPLOAD_FOLDER = "static/uploads"
+HISTORY_FILE  = "history.json"
+BACKUP_FILE   = "backup_history.json"
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs("models", exist_ok=True)
-
-# ─────────────── MONGODB SETUP ───────────────
-MONGO_URI = os.environ.get("MONGO_URI", "")
-
-db_client     = None
-history_col   = None
-backup_col    = None
-
-def get_db():
-    """Lazy connect to MongoDB — only when first needed."""
-    global db_client, history_col, backup_col
-    if db_client is None:
-        try:
-            db_client   = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-            db_client.admin.command("ping")   # test connection
-            db          = db_client["emotisense"]
-            history_col = db["history"]
-            backup_col  = db["backup"]
-            print("MongoDB connected.")
-        except ConnectionFailure as e:
-            print(f"MongoDB connection failed: {e}")
-            db_client = None
-    return history_col, backup_col
 
 # ─────────────── SUGGESTION MAP ───────────────
 SUGGESTIONS = {
@@ -63,41 +41,23 @@ def get_suggestion(emotion):
 # ─────────────── HISTORY UTILS ───────────────
 
 def load_history():
-    col, _ = get_db()
-    if col is None:
+    if not os.path.exists(HISTORY_FILE):
         return []
     try:
-        # Return all entries, newest first, exclude MongoDB _id
-        entries = list(col.find({}, {"_id": 0}).sort("time", -1))
-        return entries
-    except Exception as e:
-        print(f"Load history error: {e}")
+        with open(HISTORY_FILE, "r") as f:
+            data = json.load(f)
+            return [data] if isinstance(data, dict) else data
+    except (json.JSONDecodeError, IOError):
         return []
 
 def save_history(entry):
-    col, _ = get_db()
-    if col is None:
-        print("MongoDB unavailable — history not saved.")
-        return
+    data = load_history()
+    data.append(entry)
     try:
-        col.insert_one({**entry})
-    except Exception as e:
-        print(f"Save history error: {e}")
-
-def backup_history():
-    """Copy all history into backup collection."""
-    col, bak = get_db()
-    if col is None:
-        return False
-    try:
-        entries = list(col.find({}, {"_id": 0}))
-        if entries:
-            bak.delete_many({})           # clear old backup
-            bak.insert_many(entries)      # write fresh backup
-        return True
-    except Exception as e:
-        print(f"Backup error: {e}")
-        return False
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+    except IOError as e:
+        print("History save error:", e)
 
 # ─────────────── AUDIO UTILS ───────────────
 
@@ -248,40 +208,40 @@ def get_history():
 
 @app.route("/delete_history_selected", methods=["POST"])
 def delete_history_selected():
-    data  = request.get_json()
-    times = data.get("times", [])
-
-    # backup first
-    backup_history()
-
-    col, _ = get_db()
-    if col is None:
-        return jsonify({"status": "error"}), 500
+    data    = request.get_json()
+    times   = data.get("times", [])
+    history = load_history()
 
     try:
-        col.delete_many({"time": {"$in": times}})
-        return jsonify({"status": "deleted"})
-    except Exception as e:
-        print(f"Delete error: {e}")
-        return jsonify({"status": "error"}), 500
+        with open(BACKUP_FILE, "w") as f:
+            json.dump(history, f, indent=4)
+    except IOError as e:
+        print("Backup error:", e)
+
+    new_history = [item for item in history if item["time"] not in times]
+    try:
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(new_history, f, indent=4)
+    except IOError as e:
+        print("Delete error:", e)
+
+    return jsonify({"status": "deleted"})
 
 @app.route("/restore_history")
 def restore_history():
-    col, bak = get_db()
-    if col is None:
+    if not os.path.exists(BACKUP_FILE):
         return jsonify({"status": "no_backup"})
 
     try:
-        entries = list(bak.find({}, {"_id": 0}))
-        if not entries:
-            return jsonify({"status": "no_backup"})
-
-        col.delete_many({})        # clear current history
-        col.insert_many(entries)   # restore from backup
-        return jsonify({"status": "restored"})
-    except Exception as e:
-        print(f"Restore error: {e}")
+        with open(BACKUP_FILE, "r") as f:
+            data = json.load(f)
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+    except (json.JSONDecodeError, IOError) as e:
+        print("Restore error:", e)
         return jsonify({"status": "error"})
+
+    return jsonify({"status": "restored"})
 
 # ─────────────── RUN ───────────────
 
