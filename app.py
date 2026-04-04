@@ -18,22 +18,35 @@ print("Loading HSEmotion model...")
 fer = HSEmotionRecognizer(model_name='enet_b0_8_best_afew')
 print("HSEmotion loaded.")
 
-# ─────────────── LOAD INSIGHTFACE ───────────────
-INSIGHTFACE_AVAILABLE = False
-face_app = None
+# ─────────────── LOAD FAIRFACE via uniface ───────────────
+# FairFace returns age as ranges: 0-2, 3-9, 10-19, 20-29, 30-39, 40-49, 50-59, 60-69, 70+
+# Trained on 108,501 balanced images across 7 races — works well for Indian/South Asian faces
+FAIRFACE_AVAILABLE = False
+fairface_predictor  = None
 
 try:
-    from insightface.app import FaceAnalysis
-    print("Loading InsightFace model...")
-    face_app = FaceAnalysis(
-        name="buffalo_l",
-        providers=["CPUExecutionProvider"]
-    )
-    face_app.prepare(ctx_id=-1, det_size=(640, 640))
-    INSIGHTFACE_AVAILABLE = True
-    print("InsightFace loaded. Age/gender: InsightFace mode.")
+    from uniface import RetinaFace as UFRetinaFace
+    from uniface.attribute import FairFace
+    print("Loading FairFace model...")
+    fairface_predictor = FairFace(providers=["CPUExecutionProvider"])
+    ff_detector        = UFRetinaFace(providers=["CPUExecutionProvider"])
+    FAIRFACE_AVAILABLE = True
+    print("FairFace loaded. Age/gender: FairFace mode.")
 except Exception as e:
-    print(f"InsightFace not available ({e}), using DeepFace.")
+    print(f"FairFace not available ({e}), using InsightFace fallback.")
+    try:
+        from insightface.app import FaceAnalysis
+        face_app = FaceAnalysis(
+            name="buffalo_l",
+            providers=["CPUExecutionProvider"]
+        )
+        face_app.prepare(ctx_id=-1, det_size=(640, 640))
+        INSIGHTFACE_AVAILABLE = True
+        print("InsightFace fallback loaded.")
+    except Exception as e2:
+        print(f"InsightFace also unavailable ({e2}), using DeepFace.")
+        INSIGHTFACE_AVAILABLE = False
+        face_app = None
 
 # ─────────────── FLASK APP ───────────────
 app = Flask(__name__)
@@ -46,13 +59,24 @@ BACKUP_FILE   = "backup_history.json"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs("models", exist_ok=True)
 
-# ─────────────── SUGGESTION MAP ───────────────
-# HSEmotion returns: happiness, sadness, anger, surprise, fear, disgust, neutral, contempt, excitement
-# DeepFace returns:  happy, sad, angry, surprise, fear, disgust, neutral
-# We handle ALL variants here
+# ─────────────── AGE RANGE → CATEGORY ───────────────
+# FairFace age groups: 0-2, 3-9, 10-19, 20-29, 30-39, 40-49, 50-59, 60-69, 70+
+AGE_CATEGORIES = {
+    "0-2":   "Infant",
+    "3-9":   "Child",
+    "10-19": "Teenager",
+    "20-29": "Young Adult",
+    "30-39": "Adult",
+    "40-49": "Middle Aged",
+    "50-59": "Middle Aged",
+    "60-69": "Senior",
+    "70+":   "Elderly",
+}
 
+# ─────────────── SUGGESTION MAP ───────────────
+# HSEmotion labels: happiness, sadness, anger, surprise, fear, disgust, neutral, contempt, excitement
+# DeepFace labels:  happy, sad, angry, surprise, fear, disgust, neutral
 SUGGESTIONS = {
-    # HSEmotion labels
     "happiness":  "Keep spreading that positive energy! 😊",
     "sadness":    "It's okay to feel low — take it one step at a time. 💙",
     "anger":      "Take a deep breath. Things will get better. 🧘",
@@ -62,20 +86,15 @@ SUGGESTIONS = {
     "neutral":    "Stay positive and keep moving forward! ✨",
     "contempt":   "Practice empathy — it can change perspectives. 🤝",
     "excitement": "Channel that energy into something creative! 🔥",
-    # DeepFace labels (fallback)
     "happy":      "Keep spreading that positive energy! 😊",
     "sad":        "It's okay to feel low — take it one step at a time. 💙",
     "angry":      "Take a deep breath. Things will get better. 🧘",
 }
 
 def get_suggestion(emotion):
-    return SUGGESTIONS.get(
-        emotion.lower(),
-        "Keep going — every emotion is valid! 💫"
-    )
+    return SUGGESTIONS.get(emotion.lower(), "Keep going — every emotion is valid! 💫")
 
-# ─────────────── EMOTION LABEL NORMALIZATION ───────────────
-# Normalize HSEmotion labels to display-friendly format
+# ─────────────── EMOTION DISPLAY NORMALIZATION ───────────────
 EMOTION_DISPLAY = {
     "happiness":  "HAPPY",
     "sadness":    "SAD",
@@ -86,23 +105,30 @@ EMOTION_DISPLAY = {
     "neutral":    "NEUTRAL",
     "contempt":   "CONTEMPT",
     "excitement": "EXCITEMENT",
-    # DeepFace labels already clean
     "happy":      "HAPPY",
     "sad":        "SAD",
     "angry":      "ANGRY",
 }
 
 def normalize_emotion(emotion):
-    """Convert model output to clean display label."""
     return EMOTION_DISPLAY.get(emotion.lower(), emotion.upper())
 
-# ─────────────── FACE DETECTION ───────────────
+# ─────────────── IMAGE ENHANCEMENT ───────────────
+def enhance_image(img_bgr):
+    """CLAHE enhancement for dark/low-light images."""
+    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l_enhanced = clahe.apply(l)
+    lab_enhanced = cv2.merge([l_enhanced, a, b])
+    return cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2BGR)
+
+# ─────────────── FACE DETECTION (OpenCV) ───────────────
 face_cascade = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 )
 
 def detect_face_crop(img_bgr):
-    """Returns largest face crop with padding, or full image as fallback."""
     gray  = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(
         gray, scaleFactor=1.1, minNeighbors=5, minSize=(48, 48)
@@ -117,39 +143,15 @@ def detect_face_crop(img_bgr):
     y2  = min(img_bgr.shape[0], y + h + pad)
     return img_bgr[y1:y2, x1:x2]
 
-def enhance_image(img_bgr):
-    """
-    Enhance dark/low-light images before analysis.
-    Helps InsightFace and HSEmotion work better on selfies
-    taken in poor lighting conditions.
-    """
-    # Convert to LAB color space
-    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-
-    # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    l_enhanced = clahe.apply(l)
-
-    # Merge and convert back
-    lab_enhanced = cv2.merge([l_enhanced, a, b])
-    enhanced = cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2BGR)
-    return enhanced
-
-# ─────────────── EMOTION ───────────────
-
+# ─────────────── EMOTION — HSEmotion ───────────────
 def predict_emotion(image_path):
-    """Predict emotion using HSEmotion EfficientNet-B0."""
     try:
         img_bgr   = cv2.imread(image_path)
         if img_bgr is None:
             return "neutral", 0.0
-
-        # Enhance image quality first
         img_bgr   = enhance_image(img_bgr)
         face_crop = detect_face_crop(img_bgr)
         face_rgb  = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
-
         emotion, scores = fer.predict_emotions(face_rgb, logits=False)
         confidence = round(float(max(scores)) * 100, 1)
         return emotion.lower(), confidence
@@ -157,107 +159,124 @@ def predict_emotion(image_path):
         print(f"Emotion error: {e}")
         return "neutral", 0.0
 
-# ─────────────── AGE & GENDER ───────────────
-
-def get_age_gender(image_path):
+# ─────────────── AGE & GENDER — FairFace (primary) ───────────────
+def get_age_gender_fairface(image_path):
     """
-    InsightFace buffalo_l primary → DeepFace fallback.
-    Applies image enhancement and age correction for
-    dark/low-light photos common in selfies.
+    FairFace via uniface:
+    - Trained on 108K+ balanced images across 7 ethnicities
+    - Returns age as range: 0-2, 3-9, 10-19, 20-29, 30-39, 40-49, 50-59, 60-69, 70+
+    - Gender: Male / Female
+    - Works well for South Asian, Indian, dark-skinned faces
     """
-
-    img_orig = cv2.imread(image_path)
-    if img_orig is None:
-        return "N/A", "N/A"
-
-    # Enhance image for better detection
-    img_enhanced = enhance_image(img_orig)
-
-    # ── InsightFace path ──
-    if INSIGHTFACE_AVAILABLE and face_app is not None:
-        for img in [img_enhanced, img_orig]:
-            try:
-                faces = face_app.get(img)
-
-                if not faces:
-                    img_r = cv2.resize(img, (640, 640))
-                    faces = face_app.get(img_r)
-
-                if faces:
-                    face = sorted(
-                        faces,
-                        key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]),
-                        reverse=True
-                    )[0]
-
-                    raw_age = face.age
-                    if raw_age is not None and not np.isnan(float(raw_age)):
-                        age = int(float(raw_age))
-
-                        # ── AGE CORRECTION ──
-                        # InsightFace overestimates for dark/low-light South Asian faces
-                        # Apply correction based on typical overestimation patterns
-                        if age > 45:
-                            age = age - 12   # strong correction for very high estimates
-                        elif age > 35:
-                            age = age - 8    # moderate correction
-                        elif age > 25:
-                            age = age - 5    # mild correction
-                        elif age > 18:
-                            age = age - 3    # slight correction for young adults
-                        age = max(1, age)    # never below 1
-                    else:
-                        age = "N/A"
-
-                    raw_gender = face.gender
-                    if raw_gender is not None:
-                        gender = "Male" if int(raw_gender) == 1 else "Female"
-                    else:
-                        gender = "N/A"
-
-                    print(f"InsightFace result — raw_age: {face.age}, corrected_age: {age}, gender: {gender}")
-                    return age, gender
-
-            except Exception as e:
-                print(f"InsightFace error: {e}")
-                continue
-
-    # ── DeepFace fallback ──
     try:
-        result = DeepFace.analyze(
-            image_path,
-            actions=["age", "gender"],
-            enforce_detection=False,
-            detector_backend="opencv",
-            silent=True
-        )
-        if isinstance(result, list):
-            result = result[0]
+        img = cv2.imread(image_path)
+        img = enhance_image(img)
 
-        raw_age = int(result.get("age", 25))
-        # DeepFace correction — it overestimates significantly
-        if raw_age > 45:
-            age = raw_age - 15
-        elif raw_age > 35:
-            age = raw_age - 10
-        elif raw_age > 25:
-            age = raw_age - 7
-        else:
-            age = raw_age - 4
-        age = max(1, age)
+        # Detect faces using RetinaFace
+        faces = ff_detector.detect(img)
+        if not faces:
+            img_r = cv2.resize(img, (640, 640))
+            faces = ff_detector.detect(img_r)
 
-        gender_raw = result.get("dominant_gender", "unknown").lower()
-        gender     = "Male" if gender_raw == "man" else "Female"
+        if faces:
+            # Pick largest face
+            face = sorted(faces, key=lambda f: (f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]), reverse=True)[0]
+            result = fairface_predictor.predict(img, face)
 
-        print(f"DeepFace fallback — raw_age: {raw_age}, corrected_age: {age}, gender: {gender}")
-        return age, gender
+            age    = result.get("age", "Unknown")
+            gender = result.get("gender", "Unknown")
+            gender = gender.capitalize()
+
+            print(f"FairFace result — age: {age}, gender: {gender}")
+            return age, gender
 
     except Exception as e:
+        print(f"FairFace error: {e}")
+
+    return None, None
+
+# ─────────────── AGE & GENDER — InsightFace (fallback 1) ───────────────
+def get_age_gender_insightface(image_path):
+    try:
+        img   = enhance_image(cv2.imread(image_path))
+        faces = face_app.get(img)
+        if not faces:
+            faces = face_app.get(cv2.resize(img, (640, 640)))
+        if faces:
+            face = sorted(faces, key=lambda f: (f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]), reverse=True)[0]
+            raw_age = face.age
+            if raw_age is not None and not np.isnan(float(raw_age)):
+                age = int(float(raw_age))
+                # Age correction for low-light overestimation
+                if age > 45:   age = age - 12
+                elif age > 35: age = age - 8
+                elif age > 25: age = age - 5
+                elif age > 18: age = age - 3
+                age = max(1, age)
+                # Convert to range string for consistency
+                if   age <= 2:  age_str = "0-2"
+                elif age <= 9:  age_str = "3-9"
+                elif age <= 19: age_str = "10-19"
+                elif age <= 29: age_str = "20-29"
+                elif age <= 39: age_str = "30-39"
+                elif age <= 49: age_str = "40-49"
+                elif age <= 59: age_str = "50-59"
+                elif age <= 69: age_str = "60-69"
+                else:           age_str = "70+"
+            else:
+                age_str = "Unknown"
+            gender = "Male" if face.gender == 1 else "Female"
+            return age_str, gender
+    except Exception as e:
+        print(f"InsightFace error: {e}")
+    return None, None
+
+# ─────────────── AGE & GENDER — DeepFace (fallback 2) ───────────────
+def get_age_gender_deepface(image_path):
+    try:
+        result = DeepFace.analyze(
+            image_path, actions=["age", "gender"],
+            enforce_detection=False, detector_backend="opencv", silent=True
+        )
+        if isinstance(result, list): result = result[0]
+        raw_age = int(result.get("age", 25))
+        if   raw_age > 45: age = raw_age - 15
+        elif raw_age > 35: age = raw_age - 10
+        elif raw_age > 25: age = raw_age - 7
+        else:              age = raw_age - 4
+        age = max(1, age)
+        if   age <= 2:  age_str = "0-2"
+        elif age <= 9:  age_str = "3-9"
+        elif age <= 19: age_str = "10-19"
+        elif age <= 29: age_str = "20-29"
+        elif age <= 39: age_str = "30-39"
+        elif age <= 49: age_str = "40-49"
+        elif age <= 59: age_str = "50-59"
+        elif age <= 69: age_str = "60-69"
+        else:           age_str = "70+"
+        gender_raw = result.get("dominant_gender", "unknown").lower()
+        gender = "Male" if gender_raw == "man" else "Female"
+        return age_str, gender
+    except Exception as e:
         print(f"DeepFace error: {e}")
-        return "N/A", "N/A"
+        return "Unknown", "Unknown"
+
+# ─────────────── MAIN AGE/GENDER DISPATCHER ───────────────
+def get_age_gender(image_path):
+    """Try FairFace → InsightFace → DeepFace in order."""
+    if FAIRFACE_AVAILABLE:
+        age, gender = get_age_gender_fairface(image_path)
+        if age is not None:
+            return age, gender
+
+    if 'face_app' in globals() and face_app is not None:
+        age, gender = get_age_gender_insightface(image_path)
+        if age is not None:
+            return age, gender
+
+    return get_age_gender_deepface(image_path)
 
 # ─────────────── HISTORY UTILS ───────────────
-
 def load_history():
     if not os.path.exists(HISTORY_FILE):
         return []
@@ -278,18 +297,14 @@ def save_history(entry):
         print("History save error:", e)
 
 # ─────────────── AUDIO UTILS ───────────────
-
 def convert_to_wav(input_path, output_path):
     audio = AudioSegment.from_file(input_path)
     audio.export(output_path, format="wav")
 
 # ─────────────── ROUTES ───────────────
-
 @app.route("/")
 def home():
     return render_template("index.html")
-
-# ── IMAGE ──
 
 @app.route("/predict_image", methods=["POST"])
 def predict_image():
@@ -327,14 +342,11 @@ def predict_image():
     save_history(entry)
     return jsonify(entry)
 
-# ── AUDIO (live recording) ──
-
 @app.route("/predict_audio", methods=["POST"])
 def predict_audio():
     file = request.files.get("audio")
     if not file:
         return jsonify({"error": "No audio provided"}), 400
-
     try:
         filename  = str(int(time.time() * 1000))
         webm_path = os.path.join(UPLOAD_FOLDER, filename + ".webm")
@@ -361,14 +373,11 @@ def predict_audio():
     save_history(entry)
     return jsonify(entry)
 
-# ── AUDIO FILE UPLOAD ──
-
 @app.route("/predict_audio_file", methods=["POST"])
 def predict_audio_file():
     file = request.files.get("audioFile")
     if not file:
         return jsonify({"error": "No audio file provided"}), 400
-
     try:
         ext      = os.path.splitext(file.filename)[1].lower() or ".webm"
         filename = str(int(time.time() * 1000))
@@ -398,8 +407,6 @@ def predict_audio_file():
     }
     save_history(entry)
     return jsonify(entry)
-
-# ── HISTORY ──
 
 @app.route("/get_history")
 def get_history():
@@ -438,7 +445,6 @@ def restore_history():
     return jsonify({"status": "restored"})
 
 # ─────────────── RUN ───────────────
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     app.run(debug=False, host="0.0.0.0", port=port)
