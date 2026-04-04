@@ -144,7 +144,9 @@ def get_age_gender(image_path):
         )
         if isinstance(result, list):
             result = result[0]
-        age        = max(1, int(result.get("age", 25)) - 3)
+        raw_age = int(result.get("age", 25))
+        # DeepFace overestimates — apply stronger correction
+        age = max(1, raw_age - 8) if raw_age > 20 else max(1, raw_age - 3)
         gender_raw = result.get("dominant_gender", "unknown").lower()
         gender     = "Male" if gender_raw == "man" else "Female"
         return age, gender
