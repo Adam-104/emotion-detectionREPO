@@ -1,4 +1,6 @@
 import os
+
+from scipy.datasets import face
 os.environ["TF_CPP_MIN_LOG_LEVEL"]  = "3"
 os.environ["CUDA_VISIBLE_DEVICES"]  = "-1"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
@@ -8,6 +10,7 @@ import json, uuid, time, cv2
 import numpy as np
 from datetime import datetime
 from hsemotion_onnx.facial_emotions import HSEmotionRecognizer
+from deepface import DeepFace
 from utils.audio_emotion import predict_audio_emotion
 from utils.audio_age_gender import predict_age_gender as audio_age_gender
 from pydub import AudioSegment
@@ -124,7 +127,7 @@ def get_age_gender(image_path):
                     key=lambda f: (f.bbox[2]-f.bbox[0]) * (f.bbox[3]-f.bbox[1]),
                     reverse=True
                 )[0]
-                age    = int(face.age)
+                age    = int(face.age) if face.age is not None else 25
                 gender = "Male" if face.gender == 1 else "Female"
                 return age, gender
         except Exception as e:
