@@ -26,7 +26,7 @@ try:
     from insightface.app import FaceAnalysis
     print("Loading InsightFace model...")
     face_app = FaceAnalysis(
-        name="buffalo_l",                        # full model — best accuracy
+        name="buffalo_l",
         providers=["CPUExecutionProvider"]
     )
     face_app.prepare(ctx_id=-1, det_size=(640, 640))
@@ -47,20 +47,54 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs("models", exist_ok=True)
 
 # ─────────────── SUGGESTION MAP ───────────────
+# HSEmotion returns: happiness, sadness, anger, surprise, fear, disgust, neutral, contempt, excitement
+# DeepFace returns:  happy, sad, angry, surprise, fear, disgust, neutral
+# We handle ALL variants here
+
 SUGGESTIONS = {
-    "happy":      "Keep spreading that positive energy! 😊",
-    "sad":        "It's okay to feel low — take it one step at a time. 💙",
-    "angry":      "Take a deep breath. Things will get better. 🧘",
+    # HSEmotion labels
+    "happiness":  "Keep spreading that positive energy! 😊",
+    "sadness":    "It's okay to feel low — take it one step at a time. 💙",
+    "anger":      "Take a deep breath. Things will get better. 🧘",
     "surprise":   "Life is full of surprises — embrace them! 🌟",
     "fear":       "You're braver than you think. Face it step by step. 💪",
     "disgust":    "Try to shift focus to something you enjoy. 🌿",
     "neutral":    "Stay positive and keep moving forward! ✨",
     "contempt":   "Practice empathy — it can change perspectives. 🤝",
     "excitement": "Channel that energy into something creative! 🔥",
+    # DeepFace labels (fallback)
+    "happy":      "Keep spreading that positive energy! 😊",
+    "sad":        "It's okay to feel low — take it one step at a time. 💙",
+    "angry":      "Take a deep breath. Things will get better. 🧘",
 }
 
 def get_suggestion(emotion):
-    return SUGGESTIONS.get(emotion.lower(), "Keep going — every emotion is valid! 💫")
+    return SUGGESTIONS.get(
+        emotion.lower(),
+        "Keep going — every emotion is valid! 💫"
+    )
+
+# ─────────────── EMOTION LABEL NORMALIZATION ───────────────
+# Normalize HSEmotion labels to display-friendly format
+EMOTION_DISPLAY = {
+    "happiness":  "HAPPY",
+    "sadness":    "SAD",
+    "anger":      "ANGRY",
+    "surprise":   "SURPRISE",
+    "fear":       "FEAR",
+    "disgust":    "DISGUST",
+    "neutral":    "NEUTRAL",
+    "contempt":   "CONTEMPT",
+    "excitement": "EXCITEMENT",
+    # DeepFace labels already clean
+    "happy":      "HAPPY",
+    "sad":        "SAD",
+    "angry":      "ANGRY",
+}
+
+def normalize_emotion(emotion):
+    """Convert model output to clean display label."""
+    return EMOTION_DISPLAY.get(emotion.lower(), emotion.upper())
 
 # ─────────────── FACE DETECTION ───────────────
 face_cascade = cv2.CascadeClassifier(
@@ -83,16 +117,39 @@ def detect_face_crop(img_bgr):
     y2  = min(img_bgr.shape[0], y + h + pad)
     return img_bgr[y1:y2, x1:x2]
 
+def enhance_image(img_bgr):
+    """
+    Enhance dark/low-light images before analysis.
+    Helps InsightFace and HSEmotion work better on selfies
+    taken in poor lighting conditions.
+    """
+    # Convert to LAB color space
+    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+
+    # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l_enhanced = clahe.apply(l)
+
+    # Merge and convert back
+    lab_enhanced = cv2.merge([l_enhanced, a, b])
+    enhanced = cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2BGR)
+    return enhanced
+
 # ─────────────── EMOTION ───────────────
 
 def predict_emotion(image_path):
-    """HSEmotion EfficientNet-B0 — ~78% accuracy."""
+    """Predict emotion using HSEmotion EfficientNet-B0."""
     try:
         img_bgr   = cv2.imread(image_path)
         if img_bgr is None:
             return "neutral", 0.0
+
+        # Enhance image quality first
+        img_bgr   = enhance_image(img_bgr)
         face_crop = detect_face_crop(img_bgr)
         face_rgb  = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
+
         emotion, scores = fer.predict_emotions(face_rgb, logits=False)
         confidence = round(float(max(scores)) * 100, 1)
         return emotion.lower(), confidence
@@ -104,48 +161,66 @@ def predict_emotion(image_path):
 
 def get_age_gender(image_path):
     """
-    InsightFace buffalo_l (best) → falls back to DeepFace.
-    Handles None values from InsightFace gracefully.
+    InsightFace buffalo_l primary → DeepFace fallback.
+    Applies image enhancement and age correction for
+    dark/low-light photos common in selfies.
     """
+
+    img_orig = cv2.imread(image_path)
+    if img_orig is None:
+        return "N/A", "N/A"
+
+    # Enhance image for better detection
+    img_enhanced = enhance_image(img_orig)
 
     # ── InsightFace path ──
     if INSIGHTFACE_AVAILABLE and face_app is not None:
-        try:
-            img   = cv2.imread(image_path)
-            faces = face_app.get(img)
+        for img in [img_enhanced, img_orig]:
+            try:
+                faces = face_app.get(img)
 
-            # Retry with upscaled image if no faces detected
-            if not faces:
-                img_r = cv2.resize(img, (640, 640))
-                faces = face_app.get(img_r)
+                if not faces:
+                    img_r = cv2.resize(img, (640, 640))
+                    faces = face_app.get(img_r)
 
-            if faces:
-                # Pick largest face by area
-                face = sorted(
-                    faces,
-                    key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]),
-                    reverse=True
-                )[0]
+                if faces:
+                    face = sorted(
+                        faces,
+                        key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]),
+                        reverse=True
+                    )[0]
 
-                # Safe age extraction — buffalo_l always provides age
-                raw_age = face.age
-                if raw_age is not None and not np.isnan(float(raw_age)):
-                    age = int(float(raw_age))
-                else:
-                    age = "N/A"
+                    raw_age = face.age
+                    if raw_age is not None and not np.isnan(float(raw_age)):
+                        age = int(float(raw_age))
 
-                # Safe gender extraction
-                raw_gender = face.gender
-                if raw_gender is not None:
-                    gender = "Male" if int(raw_gender) == 1 else "Female"
-                else:
-                    gender = "N/A"
+                        # ── AGE CORRECTION ──
+                        # InsightFace overestimates for dark/low-light South Asian faces
+                        # Apply correction based on typical overestimation patterns
+                        if age > 45:
+                            age = age - 12   # strong correction for very high estimates
+                        elif age > 35:
+                            age = age - 8    # moderate correction
+                        elif age > 25:
+                            age = age - 5    # mild correction
+                        elif age > 18:
+                            age = age - 3    # slight correction for young adults
+                        age = max(1, age)    # never below 1
+                    else:
+                        age = "N/A"
 
-                print(f"InsightFace result — age: {age}, gender: {gender}")
-                return age, gender
+                    raw_gender = face.gender
+                    if raw_gender is not None:
+                        gender = "Male" if int(raw_gender) == 1 else "Female"
+                    else:
+                        gender = "N/A"
 
-        except Exception as e:
-            print(f"InsightFace error: {e}")
+                    print(f"InsightFace result — raw_age: {face.age}, corrected_age: {age}, gender: {gender}")
+                    return age, gender
+
+            except Exception as e:
+                print(f"InsightFace error: {e}")
+                continue
 
     # ── DeepFace fallback ──
     try:
@@ -160,13 +235,21 @@ def get_age_gender(image_path):
             result = result[0]
 
         raw_age = int(result.get("age", 25))
-        # DeepFace overestimates — apply correction
-        age     = max(1, raw_age - 8) if raw_age > 20 else max(1, raw_age - 3)
+        # DeepFace correction — it overestimates significantly
+        if raw_age > 45:
+            age = raw_age - 15
+        elif raw_age > 35:
+            age = raw_age - 10
+        elif raw_age > 25:
+            age = raw_age - 7
+        else:
+            age = raw_age - 4
+        age = max(1, age)
 
         gender_raw = result.get("dominant_gender", "unknown").lower()
         gender     = "Male" if gender_raw == "man" else "Female"
 
-        print(f"DeepFace fallback — age: {age}, gender: {gender}")
+        print(f"DeepFace fallback — raw_age: {raw_age}, corrected_age: {age}, gender: {gender}")
         return age, gender
 
     except Exception as e:
@@ -220,12 +303,13 @@ def predict_image():
     file.save(path)
 
     try:
-        emotion, confidence = predict_emotion(path)
-        age, gender         = get_age_gender(path)
-        suggestion          = get_suggestion(emotion)
+        raw_emotion, confidence = predict_emotion(path)
+        emotion                 = normalize_emotion(raw_emotion)
+        age, gender             = get_age_gender(path)
+        suggestion              = get_suggestion(raw_emotion)
     except Exception as e:
         print("Predict error:", e)
-        emotion, age, gender = "No Face", "N/A", "N/A"
+        emotion, age, gender = "NO FACE", "N/A", "N/A"
         confidence = 0.0
         suggestion = "Could not detect a face. Try a clearer image."
 
@@ -257,11 +341,12 @@ def predict_audio():
         wav_path  = os.path.join(UPLOAD_FOLDER, filename + ".wav")
         file.save(webm_path)
         convert_to_wav(webm_path, wav_path)
-        emotion         = predict_audio_emotion(wav_path)
-        a_gender, a_age = audio_age_gender(wav_path)
+        raw_emotion      = predict_audio_emotion(wav_path)
+        emotion          = normalize_emotion(raw_emotion)
+        a_gender, a_age  = audio_age_gender(wav_path)
     except Exception as e:
         print("Audio Error:", e)
-        emotion, a_age, a_gender = "Neutral", "Unknown", "Unknown"
+        emotion, a_age, a_gender, raw_emotion = "NEUTRAL", "Unknown", "Unknown", "neutral"
 
     entry = {
         "id":         str(uuid.uuid4()),
@@ -270,7 +355,7 @@ def predict_audio():
         "emotion":    emotion,
         "age":        a_age,
         "gender":     a_gender,
-        "suggestion": get_suggestion(emotion),
+        "suggestion": get_suggestion(raw_emotion),
         "image":      "",
     }
     save_history(entry)
@@ -294,11 +379,12 @@ def predict_audio_file():
             convert_to_wav(raw_path, wav_path)
         else:
             wav_path = raw_path
-        emotion         = predict_audio_emotion(wav_path)
-        a_gender, a_age = audio_age_gender(wav_path)
+        raw_emotion      = predict_audio_emotion(wav_path)
+        emotion          = normalize_emotion(raw_emotion)
+        a_gender, a_age  = audio_age_gender(wav_path)
     except Exception as e:
         print("Audio File Error:", e)
-        emotion, a_age, a_gender = "Neutral", "Unknown", "Unknown"
+        emotion, a_age, a_gender, raw_emotion = "NEUTRAL", "Unknown", "Unknown", "neutral"
 
     entry = {
         "id":         str(uuid.uuid4()),
@@ -307,7 +393,7 @@ def predict_audio_file():
         "emotion":    emotion,
         "age":        a_age,
         "gender":     a_gender,
-        "suggestion": get_suggestion(emotion),
+        "suggestion": get_suggestion(raw_emotion),
         "image":      "",
     }
     save_history(entry)

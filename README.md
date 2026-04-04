@@ -10,7 +10,7 @@ app_port: 7860
 
 # EmotiSense AI — Smart Emotion Detection System
 
-A real-time multimodal emotion detection web application that analyzes facial expressions and speech to detect human emotions with high accuracy, using state-of-the-art deep learning models optimized for diverse ethnicities including South Asian faces.
+A real-time multimodal emotion detection web application that analyzes facial expressions and speech to detect human emotions with high accuracy, optimized for diverse ethnicities including South Asian faces.
 
 ## Live Demo
 
@@ -20,9 +20,7 @@ A real-time multimodal emotion detection web application that analyzes facial ex
 
 ## Project Overview
 
-EmotiSense AI is a final year project demonstrating the application of deep learning and computer vision in real-world human emotion analysis. The system accepts three types of input — static images, live webcam feed, and audio recordings — and outputs the detected emotion, estimated age, gender, confidence scores, and personalized AI suggestions.
-
-The project uses a carefully selected combination of models to maximize accuracy across all ethnicities, age groups, and lighting conditions.
+EmotiSense AI is a final year B.Tech project demonstrating the application of deep learning and computer vision in real-world human emotion analysis. The system accepts three types of input — static images, live webcam feed, and audio recordings — and outputs the detected emotion, estimated age, gender, confidence scores, and personalized AI suggestions.
 
 ---
 
@@ -44,53 +42,58 @@ The project uses a carefully selected combination of models to maximize accuracy
 | Layer | Technology |
 |---|---|
 | Frontend | HTML5, CSS3, Vanilla JavaScript |
-| Backend | Python 3.10, Flask |
-| Emotion Detection | HSEmotion EfficientNet-B2 (ONNX) |
-| Age & Gender | InsightFace buffalo_sc model |
+| Backend | Python 3.10, Flask, Gunicorn |
+| Emotion Detection | HSEmotion EfficientNet-B0 (ONNX) |
+| Age & Gender | InsightFace buffalo_l (ONNX Runtime) |
+| Image Enhancement | OpenCV CLAHE — improves low-light/dark selfie accuracy |
 | Audio Processing | Librosa, SoundFile, PyDub, FFmpeg |
-| Face Detection | OpenCV Haar Cascade + InsightFace RetinaFace |
-| Model Runtime | ONNX Runtime (no GPU required) |
+| Face Detection | OpenCV Haar Cascade |
 | Deployment | Docker, Hugging Face Spaces (2GB RAM) |
 
 ---
 
 ## Model Information
 
-### Facial Emotion — HSEmotion EfficientNet-B2
-- **Model:** `enet_b2_8_best_afew` (EfficientNet-B2)
+### Facial Emotion — HSEmotion EfficientNet-B0
+- **Model:** `enet_b0_8_best_afew` (ONNX format)
 - **Training Data:** AffectNet (450,000+ images) + FER+ dataset
-- **Accuracy:** ~82% on validation set
-- **Emotions Detected:** Happy, Sad, Angry, Fear, Disgust, Surprise, Neutral, Contempt, Excitement
-- **Runtime:** ONNX — fast CPU inference, no GPU required
-- **Why HSEmotion B2:** Best lightweight emotion model available. Outperforms DeepFace default (~65%) by 17% and HSEmotion B0 (~78%) by 4%
+- **Accuracy:** ~78% on AffectNet validation set
+- **Emotions Detected:** Happiness, Sadness, Anger, Fear, Disgust, Surprise, Neutral, Contempt, Excitement
+- **Enhancement:** CLAHE image enhancement applied before inference for better accuracy on dark/low-light photos
 
-### Age & Gender — InsightFace buffalo_sc
-- **Model:** InsightFace `buffalo_sc` (RetinaFace + ArcFace based)
-- **Training Data:** 5 million+ diverse faces across all ethnicities
-- **Age Error:** ±4 years (vs DeepFace ±8 years)
-- **Gender Accuracy:** 97% (vs DeepFace 88%)
-- **Key Advantage:** Accurately predicts age and gender for South Asian, East Asian, and African faces — addresses the bias problem in most western-trained models
-- **Runtime:** ONNX — fast CPU inference
+### Age & Gender — InsightFace buffalo_l
+- **Model:** Full InsightFace buffalo_l model pack
+- **Training:** 5 million+ diverse faces across all ethnicities
+- **Age Error:** ±4–6 years on well-lit photos
+- **Gender Accuracy:** ~97%
+- **Age Correction:** Adaptive correction applied based on estimated age range to compensate for overestimation in low-light/dark-skinned face photos
+- **Fallback:** DeepFace with OpenCV backend if InsightFace unavailable
 
 ### Audio Emotion — Custom MFCC Model
-- **Features:** MFCC (Mel-Frequency Cepstral Coefficients), 40 coefficients
-- **Model:** Custom trained Keras CNN on RAVDESS dataset
+- **Dataset:** RAVDESS (Ryerson Audio-Visual Database)
+- **Features:** MFCC (40 coefficients, 174 frames)
 - **Classes:** Angry, Disgust, Fear, Happy, Neutral, Sad, Surprise
 - **Accuracy:** ~70% on RAVDESS test set
 
 ---
 
-## Accuracy Comparison
+## Accuracy Improvement History
 
-### Before vs After Model Upgrade
-
-| Feature | Old Model | New Model | Improvement |
+| Version | Emotion Model | Age/Gender Model | Key Fix |
 |---|---|---|---|
-| Emotion | DeepFace (~65%) | HSEmotion B2 (~82%) | +17% |
-| Age error | DeepFace (±8 yr) | InsightFace (±4 yr) | 2x better |
-| Gender | DeepFace (88%) | InsightFace (97%) | +9% |
-| South Asian faces | Poor | Excellent | Major improvement |
-| Child age detection | Overestimates (30+) | Accurate (±4 yr) | Fixed |
+| v1 | DeepFace (~65%) | DeepFace (~88% gender) | Initial |
+| v2 | HSEmotion B0 (~78%) | InsightFace buffalo_sc | +13% emotion accuracy |
+| v3 | HSEmotion B0 (~78%) | InsightFace buffalo_l | Better age/gender |
+| v4 (current) | HSEmotion B0 + CLAHE | buffalo_l + age correction | Fixed suggestion labels, better age for dark photos |
+
+---
+
+## Known Limitations
+
+- Age prediction is less accurate for **dark/low-light selfies** — CLAHE enhancement helps but does not fully compensate
+- Age prediction for **very dark skin tones in poor lighting** may still overestimate by 5–15 years
+- Audio emotion requires clear speech — background noise reduces accuracy
+- First startup takes ~45 seconds as InsightFace buffalo_l (~281MB) downloads automatically
 
 ---
 
@@ -105,10 +108,10 @@ emotion-detection/
 ├── Procfile                  ← Gunicorn start command
 │
 ├── templates/
-│   └── index.html            ← Frontend UI (dark neural theme)
+│   └── index.html            ← Frontend UI
 │
 ├── static/
-│   ├── css/style.css         ← Styles and animations
+│   ├── css/style.css         ← Dark neural theme styles
 │   ├── js/script.js          ← Frontend logic and API calls
 │   └── uploads/              ← Temporary image/audio storage
 │
@@ -154,7 +157,6 @@ pip install -r requirements.txt
 # 4. Install FFmpeg (required for audio)
 # Windows: download from https://ffmpeg.org/download.html
 # Ubuntu:  sudo apt-get install ffmpeg
-# Mac:     brew install ffmpeg
 
 # 5. Run the application
 python app.py
@@ -167,8 +169,6 @@ python app.py
 
 ## Deployment
 
-The application is containerized with Docker and deployed on **Hugging Face Spaces**.
-
 | Setting | Value |
 |---|---|
 | Platform | Hugging Face Spaces |
@@ -176,24 +176,19 @@ The application is containerized with Docker and deployed on **Hugging Face Spac
 | RAM | 2GB free tier |
 | Port | 7860 |
 | Python | 3.10.13 |
-| Server | Gunicorn (1 worker, 2 threads) |
+| Server | Gunicorn (1 worker, 2 threads, 300s timeout) |
 | URL | `https://akaza1-emotion-detection.hf.space` |
-
-### Model Downloads at Runtime
-- **HSEmotion B2** — auto-downloads ONNX weights (~35MB) on first startup
-- **InsightFace buffalo_sc** — auto-downloads model pack (~85MB) on first startup
-- Both models are cached after first download — subsequent starts are instant
 
 ---
 
 ## Future Improvements
 
-- MongoDB Atlas integration for persistent history across sessions
+- MongoDB Atlas for persistent history across server restarts
 - Real-time video stream emotion tracking (frame-by-frame)
-- Multi-face detection and group emotion analysis
+- Multi-face detection for group analysis
 - Emotion trend analytics dashboard with graphs
-- Push notifications for emotion-based alerts
-- Mobile app version (React Native)
+- Mobile application (React Native)
+- Better low-light age estimation with dedicated nighttime face models
 
 ---
 
