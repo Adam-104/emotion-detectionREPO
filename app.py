@@ -1,6 +1,4 @@
 import os
-
-from scipy.datasets import face
 os.environ["TF_CPP_MIN_LOG_LEVEL"]  = "3"
 os.environ["CUDA_VISIBLE_DEVICES"]  = "-1"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
@@ -9,19 +7,18 @@ from flask import Flask, render_template, request, jsonify
 import json, uuid, time, cv2
 import numpy as np
 from datetime import datetime
-from hsemotion_onnx.facial_emotions import HSEmotionRecognizer
 from deepface import DeepFace
+from hsemotion_onnx.facial_emotions import HSEmotionRecognizer
 from utils.audio_emotion import predict_audio_emotion
 from utils.audio_age_gender import predict_age_gender as audio_age_gender
 from pydub import AudioSegment
 
 # ─────────────── LOAD HSEMOTION ───────────────
-# Using B0 — stable download, ~78% accuracy
 print("Loading HSEmotion model...")
 fer = HSEmotionRecognizer(model_name='enet_b0_8_best_afew')
 print("HSEmotion loaded.")
 
-# ─────────────── LOAD INSIGHTFACE (with fallback) ───────────────
+# ─────────────── LOAD INSIGHTFACE ───────────────
 INSIGHTFACE_AVAILABLE = False
 face_app = None
 
@@ -29,15 +26,14 @@ try:
     from insightface.app import FaceAnalysis
     print("Loading InsightFace model...")
     face_app = FaceAnalysis(
-        name="buffalo_sc",
+        name="buffalo_l",                        # full model — best accuracy
         providers=["CPUExecutionProvider"]
     )
     face_app.prepare(ctx_id=-1, det_size=(640, 640))
     INSIGHTFACE_AVAILABLE = True
     print("InsightFace loaded. Age/gender: InsightFace mode.")
 except Exception as e:
-    print(f"InsightFace not available ({e}), falling back to DeepFace.")
-    from deepface import DeepFace
+    print(f"InsightFace not available ({e}), using DeepFace.")
 
 # ─────────────── FLASK APP ───────────────
 app = Flask(__name__)
@@ -87,10 +83,10 @@ def detect_face_crop(img_bgr):
     y2  = min(img_bgr.shape[0], y + h + pad)
     return img_bgr[y1:y2, x1:x2]
 
-# ─────────────── EMOTION — HSEmotion ───────────────
+# ─────────────── EMOTION ───────────────
 
 def predict_emotion(image_path):
-    """Predict emotion using HSEmotion EfficientNet-B0 (~78% accuracy)."""
+    """HSEmotion EfficientNet-B0 — ~78% accuracy."""
     try:
         img_bgr   = cv2.imread(image_path)
         if img_bgr is None:
@@ -108,32 +104,50 @@ def predict_emotion(image_path):
 
 def get_age_gender(image_path):
     """
-    InsightFace if available (97% gender, ±4yr age),
-    otherwise DeepFace fallback.
+    InsightFace buffalo_l (best) → falls back to DeepFace.
+    Handles None values from InsightFace gracefully.
     """
+
+    # ── InsightFace path ──
     if INSIGHTFACE_AVAILABLE and face_app is not None:
         try:
             img   = cv2.imread(image_path)
             faces = face_app.get(img)
 
+            # Retry with upscaled image if no faces detected
             if not faces:
-                # Retry with resized image
                 img_r = cv2.resize(img, (640, 640))
                 faces = face_app.get(img_r)
 
             if faces:
-                face   = sorted(
+                # Pick largest face by area
+                face = sorted(
                     faces,
-                    key=lambda f: (f.bbox[2]-f.bbox[0]) * (f.bbox[3]-f.bbox[1]),
+                    key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]),
                     reverse=True
                 )[0]
-                age    = int(face.age) if face.age is not None else 25
-                gender = "Male" if face.gender == 1 else "Female"
-                return age, gender
-        except Exception as e:
-            print(f"InsightFace age/gender error: {e}")
 
-    # DeepFace fallback
+                # Safe age extraction — buffalo_l always provides age
+                raw_age = face.age
+                if raw_age is not None and not np.isnan(float(raw_age)):
+                    age = int(float(raw_age))
+                else:
+                    age = "N/A"
+
+                # Safe gender extraction
+                raw_gender = face.gender
+                if raw_gender is not None:
+                    gender = "Male" if int(raw_gender) == 1 else "Female"
+                else:
+                    gender = "N/A"
+
+                print(f"InsightFace result — age: {age}, gender: {gender}")
+                return age, gender
+
+        except Exception as e:
+            print(f"InsightFace error: {e}")
+
+    # ── DeepFace fallback ──
     try:
         result = DeepFace.analyze(
             image_path,
@@ -144,14 +158,19 @@ def get_age_gender(image_path):
         )
         if isinstance(result, list):
             result = result[0]
+
         raw_age = int(result.get("age", 25))
-        # DeepFace overestimates — apply stronger correction
-        age = max(1, raw_age - 8) if raw_age > 20 else max(1, raw_age - 3)
+        # DeepFace overestimates — apply correction
+        age     = max(1, raw_age - 8) if raw_age > 20 else max(1, raw_age - 3)
+
         gender_raw = result.get("dominant_gender", "unknown").lower()
         gender     = "Male" if gender_raw == "man" else "Female"
+
+        print(f"DeepFace fallback — age: {age}, gender: {gender}")
         return age, gender
+
     except Exception as e:
-        print(f"DeepFace age/gender error: {e}")
+        print(f"DeepFace error: {e}")
         return "N/A", "N/A"
 
 # ─────────────── HISTORY UTILS ───────────────
@@ -238,8 +257,8 @@ def predict_audio():
         wav_path  = os.path.join(UPLOAD_FOLDER, filename + ".wav")
         file.save(webm_path)
         convert_to_wav(webm_path, wav_path)
-        emotion          = predict_audio_emotion(wav_path)
-        a_gender, a_age  = audio_age_gender(wav_path)
+        emotion         = predict_audio_emotion(wav_path)
+        a_gender, a_age = audio_age_gender(wav_path)
     except Exception as e:
         print("Audio Error:", e)
         emotion, a_age, a_gender = "Neutral", "Unknown", "Unknown"
@@ -275,8 +294,8 @@ def predict_audio_file():
             convert_to_wav(raw_path, wav_path)
         else:
             wav_path = raw_path
-        emotion          = predict_audio_emotion(wav_path)
-        a_gender, a_age  = audio_age_gender(wav_path)
+        emotion         = predict_audio_emotion(wav_path)
+        a_gender, a_age = audio_age_gender(wav_path)
     except Exception as e:
         print("Audio File Error:", e)
         emotion, a_age, a_gender = "Neutral", "Unknown", "Unknown"
