@@ -17,10 +17,11 @@ from pydub import AudioSegment
 # ═══════════════════════════════════════════════
 
 # ── Facial Emotion: EfficientNet-B2 (upgraded from B0) ──────────────────────
-# enet_b2_8_best_afew: ~72% acc on AffectNet-8 vs ~65% for B0, same API
+# enet_b2_8: EfficientNet-B2 trained on AffectNet-8, best single model in the package
+# Valid model names: enet_b0_8_best_vgaf | enet_b0_8_best_afew | enet_b0_8_va_mtl | enet_b2_8 | enet_b2_7
 print("Loading HSEmotion B2 model...")
-fer = HSEmotionRecognizer(model_name='enet_b2_8_best_afew')
-print("✓ HSEmotion enet_b2_8_best_afew loaded.")
+fer = HSEmotionRecognizer(model_name='enet_b2_8')
+print("✓ HSEmotion enet_b2_8 loaded.")
 
 # ── Age/Gender PRIMARY: InsightFace buffalo_l ────────────────────────────────
 # Flipped: InsightFace is now primary (80ms, MAE ~5 yrs), DeepFace is fallback
