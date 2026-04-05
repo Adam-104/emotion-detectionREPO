@@ -46,19 +46,27 @@ except Exception as e:
     print(f"✗ DeepFace not available: {e}")
 
 # ── Audio Emotion: SpeechBrain ECAPA-TDNN ───────────────────────────────────
-# Replaces hand-crafted librosa pipeline — pretrained on IEMOCAP, F1 ~0.79
+# Force CPU before ANY torch/speechbrain import — prevents libcudart.so crash
+# on CPU-only Hugging Face Spaces even when torch is installed with CUDA build
+os.environ["SPEECHBRAIN_BACKEND"] = "cpu"
+os.environ["TORCH_DEVICE"]        = "cpu"
+
 SPEECHBRAIN_AVAILABLE = False
 audio_emotion_classifier = None
 try:
+    import torch
+    torch.set_num_threads(2)                  # keep CPU threads reasonable on HF Spaces
+
     from speechbrain.pretrained.interfaces import foreign_class
     audio_emotion_classifier = foreign_class(
         source="speechbrain/emotion-recognition-wav2vec2-IEMOCAP",
         pymodule_file="custom_interface.py",
         classname="CustomEncoderWav2Vec2Classifier",
-        savedir="models/speechbrain_emotion"
+        savedir="models/speechbrain_emotion",
+        run_opts={"device": "cpu"}            # explicit CPU — prevents CUDA lookup
     )
     SPEECHBRAIN_AVAILABLE = True
-    print("✓ SpeechBrain ECAPA emotion classifier loaded.")
+    print("✓ SpeechBrain ECAPA emotion classifier loaded (CPU).")
 except Exception as e:
     print(f"✗ SpeechBrain not available, falling back to librosa pipeline: {e}")
 
