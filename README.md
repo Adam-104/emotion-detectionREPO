@@ -38,7 +38,7 @@ A real-time multimodal emotion detection web application using state-of-the-art 
 | Frontend | HTML5, CSS3, Vanilla JavaScript |
 | Backend | Python 3.10, Flask, Gunicorn |
 | Emotion Detection | HSEmotion EfficientNet-B0 (ONNX) |
-| Age & Gender | **InsightFace buffalo_l** + Multi-Signal Correction Engine |
+| Age & Gender | **InsightFace buffalo_l** + Multi-Signal Correction Engine + DeepFace gender cross-check |
 | Image Enhancement | OpenCV CLAHE — improves low-light accuracy |
 | Audio Processing | Librosa, SoundFile, PyDub, FFmpeg |
 | Face Detection | InsightFace SCRFD + OpenCV Haar Cascade |
@@ -56,16 +56,16 @@ A real-time multimodal emotion detection web application using state-of-the-art 
 
 ---
 
-### Age & Gender — InsightFace buffalo_l + Multi-Signal Correction (v5)
+### Age & Gender — InsightFace buffalo_l + Multi-Signal Correction + DeepFace Cross-Check (v5.1)
 
 > **Why buffalo_l?**
-> buffalo_l is the **best freely available open-source ONNX model** for age and gender prediction. It uses SCRFD for face detection and a dedicated attribute regression head trained on millions of diverse images. Gender accuracy is ~96%. There is no significantly better open-source alternative that runs on CPU without commercial licensing.
+> buffalo_l is the **best practical freely available open-source ONNX model** for age and gender prediction in a CPU-only deployment. It uses SCRFD for face detection and a dedicated attribute regression head trained on millions of diverse images. In this project it is used as the **primary age/gender model**, while DeepFace is used only as a fallback and optional gender cross-check.
 
 **The real problem isn't the model — it's systematic underestimation bias:**
 
 All deep learning age models (including buffalo_l, DeepFace, FairFace) are trained on image datasets that skew younger because the internet has more photos of young people. This causes models to *plateau* at ~50-60 for genuinely elderly faces. For example, a 75-year-old Indian man may be predicted as 35 by the raw model.
 
-**Our Multi-Signal Correction Engine fixes this:**
+**Our Multi-Signal Correction Engine reduces this bias:**
 
 ```
 Corrected Age = raw_model_age
@@ -96,7 +96,7 @@ Corrected Age = raw_model_age
 | 60-69 | 60-69 |
 | 70+ | 70+ |
 
-**Fallback chain:** InsightFace buffalo_l → DeepFace (retinaface detector) → DeepFace (mtcnn) → DeepFace (opencv)
+**Inference flow:** InsightFace buffalo_l → optional DeepFace gender cross-check → DeepFace fallback (`retinaface` → `mtcnn` → `opencv`)
 
 ---
 
@@ -133,7 +133,7 @@ Yes — but with significant trade-offs:
 | v2 | InsightFace buffalo_sc | Faster but less accurate |
 | v3 | InsightFace buffalo_l | Better accuracy, age underestimation |
 | v4 | FairFace via uniface | Age ranges — but uniface broke on HF Spaces |
-| **v5 (current)** | **buffalo_l + Multi-Signal Correction** | Gray hair + wrinkle + skin-tone signals, +24yr max correction, DeepFace multi-detector fallback |
+| **v5.1 (current)** | **buffalo_l + correction + DeepFace cross-check** | InsightFace is primary, DeepFace is used only for fallback and high-confidence gender override |
 
 ---
 

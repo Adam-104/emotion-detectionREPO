@@ -25,10 +25,10 @@ INSIGHTFACE_AVAILABLE = False
 face_app = None
 try:
     from insightface.app import FaceAnalysis as InsightFaceAnalysis
-    face_app = InsightFaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+    face_app = InsightFaceAnalysis(name="antelopev2", providers=["CPUExecutionProvider"])
     face_app.prepare(ctx_id=-1, det_size=(640, 640))
     INSIGHTFACE_AVAILABLE = True
-    print("✓ InsightFace buffalo_l loaded.")
+    print("✓ InsightFace antelopev2 loaded.")
 except Exception as e:
     print(f"✗ InsightFace not available: {e}")
 
@@ -192,7 +192,46 @@ def _correct_age(raw_age, face_crop_bgr):
     print(f"  Age correction: raw={raw_age:.1f} → base={base} + visual={visual_boost*0.4:.1f} = {int(round(corrected))}")
     return int(round(corrected))
 
-# ── PRIMARY: DeepFace + retinaface ───────────────────────────────────────
+def _parse_deepface_gender(result):
+    gender_scores = result.get("gender", {})
+    if isinstance(gender_scores, dict) and gender_scores:
+        normalized = {str(k).lower(): float(v) for k, v in gender_scores.items()}
+        man_score = max(normalized.get("man", 0.0), normalized.get("male", 0.0))
+        woman_score = max(normalized.get("woman", 0.0), normalized.get("female", 0.0))
+        if man_score >= woman_score:
+            return "Male", man_score
+        return "Female", woman_score
+
+    gender_raw = str(result.get("dominant_gender", "Unknown")).lower()
+    if gender_raw in ["man", "male"]:
+        return "Male", 0.0
+    if gender_raw in ["woman", "female"]:
+        return "Female", 0.0
+    return "Unknown", 0.0
+
+def get_gender_deepface_only(image_path):
+    for detector in ["retinaface", "mtcnn", "opencv"]:
+        try:
+            result = DeepFace.analyze(
+                image_path,
+                actions=["gender"],
+                enforce_detection=False,
+                detector_backend=detector,
+                silent=True
+            )
+            if isinstance(result, list):
+                result = result[0]
+
+            gender, confidence = _parse_deepface_gender(result)
+            print(f"DeepFace gender ({detector}): {gender} ({confidence:.1f})")
+            if gender != "Unknown":
+                return gender, confidence
+        except Exception as e:
+            print(f"DeepFace gender ({detector}) failed: {e}")
+            continue
+    return None, 0.0
+
+# ── FALLBACK: DeepFace + retinaface ──────────────────────────────────────
 def get_age_gender_deepface(image_path):
     for detector in ["retinaface", "mtcnn", "opencv"]:
         try:
@@ -207,8 +246,9 @@ def get_age_gender_deepface(image_path):
                 result = result[0]
 
             raw_age    = float(result.get("age", 25))
-            gender_raw = result.get("dominant_gender", "Man").lower()
-            gender     = "Male" if gender_raw in ["man", "male"] else "Female"
+            gender, _  = _parse_deepface_gender(result)
+            if gender == "Unknown":
+                gender = "Male"
 
             print(f"DeepFace ({detector}): raw_age={raw_age:.1f}, gender={gender}")
 
@@ -224,7 +264,7 @@ def get_age_gender_deepface(image_path):
             continue
     return None, None
 
-# ── FALLBACK: InsightFace buffalo_l ──────────────────────────────────────
+# ── PRIMARY: InsightFace antelopev2 ──────────────────────────────────────
 def get_age_gender_insightface(image_path):
     try:
         img   = enhance_image(cv2.imread(image_path))
@@ -261,15 +301,19 @@ def get_age_gender_insightface(image_path):
 
 # ── Dispatcher ───────────────────────────────────────────────────────────
 def get_age_gender(image_path):
-    age, gender = get_age_gender_deepface(image_path)
-    if age and age not in [None, "None", "Unknown"]:
-        return age, gender
-
-    print("DeepFace failed — falling back to InsightFace...")
     if INSIGHTFACE_AVAILABLE and face_app is not None:
         age, gender = get_age_gender_insightface(image_path)
         if age:
+            deepface_gender, deepface_conf = get_gender_deepface_only(image_path)
+            if deepface_gender and deepface_gender != gender and deepface_conf >= 85.0:
+                print(f"Gender override: InsightFace={gender}, DeepFace={deepface_gender} ({deepface_conf:.1f})")
+                gender = deepface_gender
             return age, gender
+
+    print("InsightFace unavailable or failed — falling back to DeepFace...")
+    age, gender = get_age_gender_deepface(image_path)
+    if age and age not in [None, "None", "Unknown"]:
+        return age, gender
 
     return "Unknown", "Unknown"
 
