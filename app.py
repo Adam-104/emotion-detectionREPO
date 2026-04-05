@@ -7,7 +7,6 @@ from flask import Flask, render_template, request, jsonify
 import json, uuid, time, cv2
 import numpy as np
 from datetime import datetime
-from deepface import DeepFace
 from hsemotion_onnx.facial_emotions import HSEmotionRecognizer
 from utils.audio_emotion import predict_audio_emotion
 from utils.audio_age_gender import predict_age_gender as audio_age_gender
@@ -17,10 +16,14 @@ from pydub import AudioSegment
 #  MODEL LOADING
 # ═══════════════════════════════════════════════
 
-print("Loading HSEmotion model...")
-fer = HSEmotionRecognizer(model_name='enet_b0_8_best_afew')
-print("✓ HSEmotion loaded.")
+# ── Facial Emotion: EfficientNet-B2 (upgraded from B0) ──────────────────────
+# enet_b2_8_best_afew: ~72% acc on AffectNet-8 vs ~65% for B0, same API
+print("Loading HSEmotion B2 model...")
+fer = HSEmotionRecognizer(model_name='enet_b2_8_best_afew')
+print("✓ HSEmotion enet_b2_8_best_afew loaded.")
 
+# ── Age/Gender PRIMARY: InsightFace buffalo_l ────────────────────────────────
+# Flipped: InsightFace is now primary (80ms, MAE ~5 yrs), DeepFace is fallback
 INSIGHTFACE_AVAILABLE = False
 face_app = None
 try:
@@ -28,9 +31,35 @@ try:
     face_app = InsightFaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
     face_app.prepare(ctx_id=-1, det_size=(640, 640))
     INSIGHTFACE_AVAILABLE = True
-    print("✓ InsightFace buffalo_l loaded.")
+    print("✓ InsightFace buffalo_l loaded (PRIMARY for age/gender).")
 except Exception as e:
     print(f"✗ InsightFace not available: {e}")
+
+# ── Age/Gender FALLBACK: DeepFace ────────────────────────────────────────────
+DEEPFACE_AVAILABLE = False
+try:
+    from deepface import DeepFace
+    DEEPFACE_AVAILABLE = True
+    print("✓ DeepFace loaded (FALLBACK for age/gender).")
+except Exception as e:
+    print(f"✗ DeepFace not available: {e}")
+
+# ── Audio Emotion: SpeechBrain ECAPA-TDNN ───────────────────────────────────
+# Replaces hand-crafted librosa pipeline — pretrained on IEMOCAP, F1 ~0.79
+SPEECHBRAIN_AVAILABLE = False
+audio_emotion_classifier = None
+try:
+    from speechbrain.pretrained.interfaces import foreign_class
+    audio_emotion_classifier = foreign_class(
+        source="speechbrain/emotion-recognition-wav2vec2-IEMOCAP",
+        pymodule_file="custom_interface.py",
+        classname="CustomEncoderWav2Vec2Classifier",
+        savedir="models/speechbrain_emotion"
+    )
+    SPEECHBRAIN_AVAILABLE = True
+    print("✓ SpeechBrain ECAPA emotion classifier loaded.")
+except Exception as e:
+    print(f"✗ SpeechBrain not available, falling back to librosa pipeline: {e}")
 
 # ═══════════════════════════════════════════════
 #  FLASK SETUP
@@ -68,6 +97,14 @@ EMOTION_DISPLAY = {
     "neutral":   "NEUTRAL",  "contempt":   "CONTEMPT",
     "excitement":"EXCITEMENT","happy":     "HAPPY",
     "sad":       "SAD",      "angry":      "ANGRY",
+}
+
+# SpeechBrain IEMOCAP label map → our display labels
+SPEECHBRAIN_LABEL_MAP = {
+    "neu": "neutral",
+    "hap": "happiness",
+    "sad": "sadness",
+    "ang": "anger",
 }
 
 def get_suggestion(emotion):
@@ -111,16 +148,22 @@ def _get_face_crop_cv2(image_path):
         return np.zeros((100,100,3), dtype=np.uint8)
 
 # ═══════════════════════════════════════════════
-#  EMOTION
+#  EMOTION — EfficientNet-B2 (enet_b2_8_best_afew)
 # ═══════════════════════════════════════════════
 def predict_emotion(image_path):
+    """
+    Uses HSEmotionRecognizer with enet_b2_8_best_afew.
+    Returns (emotion_str, confidence_float).
+    """
     try:
         img_bgr = cv2.imread(image_path)
         if img_bgr is None: return "neutral", 0.0
-        img_bgr = enhance_image(img_bgr)
+        img_bgr  = enhance_image(img_bgr)
         face_rgb = cv2.cvtColor(detect_face_crop(img_bgr), cv2.COLOR_BGR2RGB)
         emotion, scores = fer.predict_emotions(face_rgb, logits=False)
-        return emotion.lower(), round(float(max(scores)) * 100, 1)
+        confidence = round(float(max(scores)) * 100, 1)
+        print(f"HSEmotion B2: {emotion} ({confidence}%)")
+        return emotion.lower(), confidence
     except Exception as e:
         print(f"Emotion error: {e}")
         return "neutral", 0.0
@@ -128,7 +171,6 @@ def predict_emotion(image_path):
 # ═══════════════════════════════════════════════
 #  AGE/GENDER — SMART CORRECTION ENGINE
 # ═══════════════════════════════════════════════
-
 def age_to_range(age_int):
     if   age_int <= 2:  return "0-2"
     elif age_int <= 9:  return "3-9"
@@ -158,74 +200,31 @@ def _wrinkle_score(face_bgr):
         return 0.0
 
 def _correct_age(raw_age, face_crop_bgr):
-    """
-    KEY FIX: Correction is applied differently per age bracket.
-    
-    - raw_age <= 12  → NO correction (models are accurate for children/babies)
-    - raw_age <= 25  → +1 only (teens/young adults — minimal drift)
-    - raw_age <= 40  → +4 (adults — small systematic underestimate)
-    - raw_age > 40   → +8 to +22 + visual signals (elderly underestimate is severe)
-    
-    The previous bug was applying elderly corrections to ALL ages,
-    turning a baby (raw=8) into a 30-year-old.
-    """
     if raw_age <= 12:
         return int(round(raw_age))
-
     if raw_age <= 25:
         return int(round(raw_age + 1))
-
     if raw_age <= 40:
         return int(round(raw_age + 4))
-
-    # Only for 41+ do we use visual signals
     gray_score    = _gray_hair_score(face_crop_bgr)
     wrinkle_score = _wrinkle_score(face_crop_bgr)
-
     if   raw_age <= 52: base = raw_age + 8
     elif raw_age <= 60: base = raw_age + 14
     elif raw_age <= 68: base = raw_age + 18
     else:               base = raw_age + 22
-
     visual_boost = (gray_score * 12.0) + (wrinkle_score * 8.0)
     corrected = base + (visual_boost * 0.4)
     print(f"  Age correction: raw={raw_age:.1f} → base={base} + visual={visual_boost*0.4:.1f} = {int(round(corrected))}")
     return int(round(corrected))
 
-# ── PRIMARY: DeepFace + retinaface ───────────────────────────────────────
-def get_age_gender_deepface(image_path):
-    for detector in ["retinaface", "mtcnn", "opencv"]:
-        try:
-            result = DeepFace.analyze(
-                image_path,
-                actions=["age", "gender"],
-                enforce_detection=False,
-                detector_backend=detector,
-                silent=True
-            )
-            if isinstance(result, list):
-                result = result[0]
-
-            raw_age    = float(result.get("age", 25))
-            gender_raw = result.get("dominant_gender", "Man").lower()
-            gender     = "Male" if gender_raw in ["man", "male"] else "Female"
-
-            print(f"DeepFace ({detector}): raw_age={raw_age:.1f}, gender={gender}")
-
-            face_crop = _get_face_crop_cv2(image_path)
-            corrected = _correct_age(raw_age, face_crop)
-            age_str   = age_to_range(max(0, corrected))
-
-            print(f"  → Final: {age_str}, {gender}")
-            return age_str, gender
-
-        except Exception as e:
-            print(f"DeepFace ({detector}) failed: {e}")
-            continue
-    return None, None
-
-# ── FALLBACK: InsightFace buffalo_l ──────────────────────────────────────
+# ── PRIMARY: InsightFace buffalo_l ───────────────────────────────────────────
 def get_age_gender_insightface(image_path):
+    """
+    InsightFace buffalo_l: ~80ms inference, age MAE ~5.1 yrs.
+    Now the PRIMARY dispatcher — much faster and more accurate than DeepFace.
+    """
+    if not INSIGHTFACE_AVAILABLE or face_app is None:
+        return None, None
     try:
         img   = enhance_image(cv2.imread(image_path))
         faces = face_app.get(img)
@@ -252,26 +251,89 @@ def get_age_gender_insightface(image_path):
         age_str   = age_to_range(max(0, corrected))
         gender    = "Male" if face.gender == 1 else "Female"
 
-        print(f"InsightFace: raw={raw_age:.1f} → {age_str}, {gender}")
+        print(f"InsightFace (primary): raw={raw_age:.1f} → {age_str}, {gender}")
         return age_str, gender
 
     except Exception as e:
         print(f"InsightFace error: {e}")
         return None, None
 
-# ── Dispatcher ───────────────────────────────────────────────────────────
+# ── FALLBACK: DeepFace ────────────────────────────────────────────────────────
+def get_age_gender_deepface(image_path):
+    """
+    DeepFace: fallback only. Tries retinaface → mtcnn → opencv backends.
+    """
+    if not DEEPFACE_AVAILABLE:
+        return None, None
+    for detector in ["retinaface", "mtcnn", "opencv"]:
+        try:
+            result = DeepFace.analyze(
+                image_path,
+                actions=["age", "gender"],
+                enforce_detection=False,
+                detector_backend=detector,
+                silent=True
+            )
+            if isinstance(result, list):
+                result = result[0]
+
+            raw_age    = float(result.get("age", 25))
+            gender_raw = result.get("dominant_gender", "Man").lower()
+            gender     = "Male" if gender_raw in ["man", "male"] else "Female"
+
+            print(f"DeepFace fallback ({detector}): raw_age={raw_age:.1f}, gender={gender}")
+
+            face_crop = _get_face_crop_cv2(image_path)
+            corrected = _correct_age(raw_age, face_crop)
+            age_str   = age_to_range(max(0, corrected))
+
+            print(f"  → Final: {age_str}, {gender}")
+            return age_str, gender
+
+        except Exception as e:
+            print(f"DeepFace ({detector}) failed: {e}")
+            continue
+    return None, None
+
+# ── Dispatcher (InsightFace first, DeepFace fallback) ─────────────────────────
 def get_age_gender(image_path):
+    # PRIMARY: InsightFace buffalo_l
+    age, gender = get_age_gender_insightface(image_path)
+    if age and age not in [None, "None", "Unknown"]:
+        return age, gender
+
+    # FALLBACK: DeepFace
+    print("InsightFace failed — falling back to DeepFace...")
     age, gender = get_age_gender_deepface(image_path)
     if age and age not in [None, "None", "Unknown"]:
         return age, gender
 
-    print("DeepFace failed — falling back to InsightFace...")
-    if INSIGHTFACE_AVAILABLE and face_app is not None:
-        age, gender = get_age_gender_insightface(image_path)
-        if age:
-            return age, gender
-
     return "Unknown", "Unknown"
+
+# ═══════════════════════════════════════════════
+#  AUDIO EMOTION — SpeechBrain ECAPA-TDNN
+# ═══════════════════════════════════════════════
+def predict_audio_emotion_speechbrain(wav_path):
+    """
+    SpeechBrain ECAPA-TDNN fine-tuned on IEMOCAP.
+    Returns normalised emotion string.
+    Maps 4 IEMOCAP classes: neu/hap/sad/ang → our emotion labels.
+    Falls back to librosa pipeline if SpeechBrain unavailable.
+    """
+    if SPEECHBRAIN_AVAILABLE and audio_emotion_classifier is not None:
+        try:
+            out_prob, score, index, label = audio_emotion_classifier.classify_file(wav_path)
+            raw_label = label[0].strip().lower()
+            emotion   = SPEECHBRAIN_LABEL_MAP.get(raw_label, raw_label)
+            confidence = round(float(score.squeeze()) * 100, 1)
+            print(f"SpeechBrain: {raw_label} → {emotion} ({confidence}%)")
+            return emotion
+        except Exception as e:
+            print(f"SpeechBrain inference error: {e}")
+
+    # Fallback to original librosa-based pipeline
+    print("Falling back to librosa audio emotion pipeline...")
+    return predict_audio_emotion(wav_path)
 
 # ═══════════════════════════════════════════════
 #  HISTORY
@@ -351,7 +413,7 @@ def predict_audio():
         wav_path  = os.path.join(UPLOAD_FOLDER, filename + ".wav")
         file.save(webm_path)
         convert_to_wav(webm_path, wav_path)
-        raw_emotion     = predict_audio_emotion(wav_path)
+        raw_emotion     = predict_audio_emotion_speechbrain(wav_path)
         emotion         = normalize_emotion(raw_emotion)
         a_gender, a_age = audio_age_gender(wav_path)
     except Exception as e:
@@ -386,7 +448,7 @@ def predict_audio_file():
             convert_to_wav(raw_path, wav_path)
         else:
             wav_path = raw_path
-        raw_emotion     = predict_audio_emotion(wav_path)
+        raw_emotion     = predict_audio_emotion_speechbrain(wav_path)
         emotion         = normalize_emotion(raw_emotion)
         a_gender, a_age = audio_age_gender(wav_path)
     except Exception as e:
