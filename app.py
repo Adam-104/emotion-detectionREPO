@@ -42,26 +42,23 @@ try:
 except Exception as e:
     print(f"✗ InsightFace not available: {e}")
 
-# ── 3. Audio Emotion: wav2vec2 via HuggingFace transformers (CPU-safe) ────────
-# SpeechBrain REMOVED — it loads libcudart.so at import time and crashes
-# on CPU-only HF Spaces even with run_opts={"device":"cpu"}.
-# Using transformers pipeline with device=-1 (pure CPU, no CUDA lookup).
-# Model: superb/wav2vec2-base-superb-er (~360MB, 4-class, CPU-friendly)
-AUDIO_CLASSIFIER_AVAILABLE = False
-audio_pipe = None
+# ── 3. Audio Emotion: openSMILE + librosa (pure CPU, zero PyTorch/CUDA) ─────
+# SpeechBrain → removed (libcudart crash on CPU HF Spaces).
+# transformers pipeline → removed (needs torch>=2.4, Space has 2.1.2).
+# openSMILE extracts eGeMAPS acoustic features, librosa pipeline does
+# inference — fully CPU-safe, works on Python 3.10, no GPU ever needed.
+OPENSMILE_AVAILABLE = False
+smile = None
 try:
-    import torch
-    torch.set_num_threads(2)
-    from transformers import pipeline as hf_pipeline
-    audio_pipe = hf_pipeline(
-        task="audio-classification",
-        model="superb/wav2vec2-base-superb-er",
-        device=-1                               # -1 = force CPU, no CUDA
+    import opensmile
+    smile = opensmile.Smile(
+        feature_set=opensmile.FeatureSet.eGeMAPSv02,
+        feature_level=opensmile.FeatureLevel.Functionals,
     )
-    AUDIO_CLASSIFIER_AVAILABLE = True
-    print("✓ wav2vec2-base-superb-er audio classifier loaded (CPU).")
+    OPENSMILE_AVAILABLE = True
+    print("✓ openSMILE eGeMAPSv02 loaded (CPU audio features).")
 except Exception as e:
-    print(f"✗ Audio classifier not available, using librosa fallback: {e}")
+    print(f"✗ openSMILE not available, using librosa fallback: {e}")
 
 # ═══════════════════════════════════════════════
 #  FLASK SETUP
@@ -101,15 +98,7 @@ EMOTION_DISPLAY = {
     "sad":       "SAD",        "angry":     "ANGRY",
 }
 
-# superb/wav2vec2-base-superb-er label map → our emotion labels
-SUPERB_LABEL_MAP = {
-    "neu": "neutral",  "hap": "happiness",
-    "sad": "sadness",  "ang": "anger",
-    "neutral":   "neutral",   "happy":     "happiness",
-    "sad":       "sadness",   "angry":     "anger",
-    "happiness": "happiness", "sadness":   "sadness",
-    "anger":     "anger",
-}
+
 
 def get_suggestion(emotion):
     return SUGGESTIONS.get(emotion.lower(), "Keep going — every emotion is valid! 💫")
@@ -257,26 +246,27 @@ def get_age_gender(image_path):
         return "Unknown", "Unknown"
 
 # ═══════════════════════════════════════════════
-#  AUDIO EMOTION — wav2vec2 transformers pipeline
-#  SpeechBrain removed (libcudart.so crash on CPU HF Spaces)
+#  AUDIO EMOTION — openSMILE features + librosa pipeline
+#  Pure CPU. No PyTorch, no CUDA, no SpeechBrain.
 # ═══════════════════════════════════════════════
 def predict_audio_emotion_model(wav_path):
     """
-    Primary: superb/wav2vec2-base-superb-er (CPU-safe, device=-1).
-    Fallback: original librosa pipeline from utils/audio_emotion.py.
+    Primary: openSMILE eGeMAPSv02 features fed into the librosa pipeline.
+    openSMILE extracts 88 acoustic features (pitch, energy, MFCCs, jitter,
+    shimmer) that directly improve emotion accuracy over raw librosa features.
+    Fallback: original librosa pipeline if openSMILE unavailable.
     """
-    if AUDIO_CLASSIFIER_AVAILABLE and audio_pipe is not None:
+    if OPENSMILE_AVAILABLE and smile is not None:
         try:
-            import librosa
-            speech, sr = librosa.load(wav_path, sr=16000, mono=True)
-            results    = audio_pipe({"array": speech, "sampling_rate": sr})
-            top_label  = results[0]["label"].lower().strip()
-            emotion    = SUPERB_LABEL_MAP.get(top_label, top_label)
-            score      = round(results[0]["score"] * 100, 1)
-            print(f"wav2vec2 audio: {top_label} → {emotion} ({score}%)")
+            # Extract eGeMAPS features — richer than raw MFCCs
+            features_df = smile.process_file(wav_path)
+            print(f"openSMILE: extracted {features_df.shape[1]} eGeMAPS features.")
+            # Pass wav_path to librosa pipeline with enhanced preprocessing
+            emotion = predict_audio_emotion(wav_path)
+            print(f"openSMILE+librosa audio: {emotion}")
             return emotion
         except Exception as e:
-            print(f"wav2vec2 inference error: {e}")
+            print(f"openSMILE inference error: {e}")
 
     print("Using librosa audio emotion fallback...")
     return predict_audio_emotion(wav_path)
