@@ -11,4 +11,3 @@ pydub
 hsemotion-onnx
 onnxruntime
 insightface
-uniface
