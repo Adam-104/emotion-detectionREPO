@@ -11,8 +11,3 @@ pydub
 hsemotion-onnx
 onnxruntime
 insightface
-torch
-transformers
-accelerate
-huggingface_hub
-ultralytics==8.1.0
