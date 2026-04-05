@@ -11,3 +11,8 @@ pydub
 hsemotion-onnx
 onnxruntime
 insightface
+speechbrain
+transformers
+torch
+torchaudio
+huggingface_hub
