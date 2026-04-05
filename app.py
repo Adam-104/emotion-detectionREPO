@@ -12,6 +12,7 @@ from hsemotion_onnx.facial_emotions import HSEmotionRecognizer
 from utils.audio_emotion import predict_audio_emotion
 from utils.audio_age_gender import predict_age_gender as audio_age_gender
 from pydub import AudioSegment
+import torch
 
 # ═══════════════════════════════════════════════
 #  MODEL LOADING
@@ -31,6 +32,42 @@ try:
     print("✓ InsightFace antelopev2 loaded.")
 except Exception as e:
     print(f"✗ InsightFace not available: {e}")
+
+MIVOLO_AVAILABLE = False
+mivolo_detector = None
+mivolo_model = None
+mivolo_processor = None
+mivolo_config = None
+mivolo_device = None
+try:
+    from transformers import AutoConfig, AutoImageProcessor, AutoModel, AutoModelForImageClassification
+
+    mivolo_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    mivolo_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+
+    print("Loading MiVOLOv2 detector...")
+    mivolo_detector = AutoModel.from_pretrained(
+        "iitolstykh/YOLO-Face-Person-Detector",
+        trust_remote_code=True,
+        dtype=mivolo_dtype,
+    ).to(mivolo_device)
+
+    print("Loading MiVOLOv2 model...")
+    mivolo_config = AutoConfig.from_pretrained("iitolstykh/mivolo_v2", trust_remote_code=True)
+    mivolo_model = AutoModelForImageClassification.from_pretrained(
+        "iitolstykh/mivolo_v2",
+        trust_remote_code=True,
+        torch_dtype=mivolo_dtype,
+    ).to(mivolo_device)
+    mivolo_model.eval()
+    mivolo_processor = AutoImageProcessor.from_pretrained(
+        "iitolstykh/mivolo_v2",
+        trust_remote_code=True
+    )
+    MIVOLO_AVAILABLE = True
+    print("✓ MiVOLOv2 loaded.")
+except Exception as e:
+    print(f"✗ MiVOLOv2 not available: {e}")
 
 # ═══════════════════════════════════════════════
 #  FLASK SETUP
@@ -110,6 +147,82 @@ def _get_face_crop_cv2(image_path):
     except Exception:
         return np.zeros((100,100,3), dtype=np.uint8)
 
+def _clip_box(box, width, height):
+    x1, y1, x2, y2 = [int(round(float(v))) for v in box]
+    x1 = max(0, min(x1, width - 1))
+    y1 = max(0, min(y1, height - 1))
+    x2 = max(x1 + 1, min(x2, width))
+    y2 = max(y1 + 1, min(y2, height))
+    return x1, y1, x2, y2
+
+def _crop_box(img, box):
+    h, w = img.shape[:2]
+    x1, y1, x2, y2 = _clip_box(box, w, h)
+    return img[y1:y2, x1:x2]
+
+def _box_area(box):
+    x1, y1, x2, y2 = box
+    return max(0, x2 - x1) * max(0, y2 - y1)
+
+def _box_center(box):
+    x1, y1, x2, y2 = box
+    return ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+
+def _choose_primary_face(face_boxes, image_shape):
+    if not face_boxes:
+        return None
+    h, w = image_shape[:2]
+    cx, cy = w / 2.0, h / 2.0
+
+    def score(box):
+        area = _box_area(box)
+        bx, by = _box_center(box)
+        dist = ((bx - cx) ** 2 + (by - cy) ** 2) ** 0.5
+        return area - (dist * 0.35)
+
+    return max(face_boxes, key=score)
+
+def _find_matching_person(face_box, person_boxes):
+    if not face_box or not person_boxes:
+        return None
+
+    fcx, fcy = _box_center(face_box)
+    best_person = None
+    best_score = None
+
+    for person_box in person_boxes:
+        px1, py1, px2, py2 = person_box
+        contains_face = px1 <= fcx <= px2 and py1 <= fcy <= py2
+        if not contains_face:
+            continue
+
+        person_area = _box_area(person_box)
+        face_area = max(_box_area(face_box), 1)
+        ratio_penalty = abs((person_area / face_area) - 12.0)
+        score = ratio_penalty
+
+        if best_score is None or score < best_score:
+            best_score = score
+            best_person = person_box
+
+    return best_person
+
+def _extract_mivolo_boxes(detection_result):
+    face_boxes = []
+    person_boxes = []
+    names = getattr(detection_result, "names", {})
+
+    for det in detection_result.boxes:
+        cls_idx = int(det.cls)
+        label = names.get(cls_idx, str(cls_idx)).lower()
+        box = [int(v) for v in det.xyxy.squeeze().tolist()]
+        if label == "face":
+            face_boxes.append(box)
+        elif label == "person":
+            person_boxes.append(box)
+
+    return face_boxes, person_boxes
+
 # ═══════════════════════════════════════════════
 #  EMOTION
 # ═══════════════════════════════════════════════
@@ -124,6 +237,46 @@ def predict_emotion(image_path):
     except Exception as e:
         print(f"Emotion error: {e}")
         return "neutral", 0.0
+
+def get_age_gender_mivolo(image_path):
+    if not MIVOLO_AVAILABLE or not all([mivolo_detector, mivolo_model, mivolo_processor, mivolo_config]):
+        return None, None
+
+    try:
+        img = enhance_image(cv2.imread(image_path))
+        if img is None:
+            return None, None
+
+        detection = mivolo_detector(img, conf=0.35, iou=0.6)[0]
+        face_boxes, person_boxes = _extract_mivolo_boxes(detection)
+        primary_face = _choose_primary_face(face_boxes, img.shape)
+        if not primary_face:
+            return None, None
+
+        primary_person = _find_matching_person(primary_face, person_boxes)
+        face_crop = _crop_box(img, primary_face)
+        body_crop = _crop_box(img, primary_person) if primary_person else None
+
+        faces_input = mivolo_processor(images=[face_crop], return_tensors="pt")["pixel_values"]
+        bodies_input = mivolo_processor(images=[body_crop], return_tensors="pt")["pixel_values"] if body_crop is not None else None
+
+        faces_input = faces_input.to(dtype=mivolo_model.dtype, device=mivolo_device)
+        if bodies_input is not None:
+            bodies_input = bodies_input.to(dtype=mivolo_model.dtype, device=mivolo_device)
+
+        with torch.no_grad():
+            output = mivolo_model(faces_input=faces_input, body_input=bodies_input)
+
+        age_value = float(output.age_output[0].item())
+        gender_idx = int(output.gender_class_idx[0].item())
+        gender = mivolo_config.gender_id2label.get(gender_idx, "female").capitalize()
+        age_str = age_to_range(max(0, int(round(age_value))))
+
+        print(f"MiVOLOv2: raw={age_value:.1f} → {age_str}, {gender}")
+        return age_str, gender
+    except Exception as e:
+        print(f"MiVOLOv2 error: {e}")
+        return None, None
 
 # ═══════════════════════════════════════════════
 #  AGE/GENDER — SMART CORRECTION ENGINE
@@ -158,17 +311,6 @@ def _wrinkle_score(face_bgr):
         return 0.0
 
 def _correct_age(raw_age, face_crop_bgr):
-    """
-    KEY FIX: Correction is applied differently per age bracket.
-    
-    - raw_age <= 12  → NO correction (models are accurate for children/babies)
-    - raw_age <= 25  → +1 only (teens/young adults — minimal drift)
-    - raw_age <= 40  → +4 (adults — small systematic underestimate)
-    - raw_age > 40   → +8 to +22 + visual signals (elderly underestimate is severe)
-    
-    The previous bug was applying elderly corrections to ALL ages,
-    turning a baby (raw=8) into a 30-year-old.
-    """
     if raw_age <= 12:
         return int(round(raw_age))
 
@@ -178,7 +320,6 @@ def _correct_age(raw_age, face_crop_bgr):
     if raw_age <= 40:
         return int(round(raw_age + 4))
 
-    # Only for 41+ do we use visual signals
     gray_score    = _gray_hair_score(face_crop_bgr)
     wrinkle_score = _wrinkle_score(face_crop_bgr)
 
@@ -231,7 +372,6 @@ def get_gender_deepface_only(image_path):
             continue
     return None, 0.0
 
-# ── FALLBACK: DeepFace + retinaface ──────────────────────────────────────
 def get_age_gender_deepface(image_path):
     for detector in ["retinaface", "mtcnn", "opencv"]:
         try:
@@ -264,7 +404,6 @@ def get_age_gender_deepface(image_path):
             continue
     return None, None
 
-# ── PRIMARY: InsightFace antelopev2 ──────────────────────────────────────
 def get_age_gender_insightface(image_path):
     try:
         img   = enhance_image(cv2.imread(image_path))
@@ -299,8 +438,11 @@ def get_age_gender_insightface(image_path):
         print(f"InsightFace error: {e}")
         return None, None
 
-# ── Dispatcher ───────────────────────────────────────────────────────────
 def get_age_gender(image_path):
+    age, gender = get_age_gender_mivolo(image_path)
+    if age:
+        return age, gender
+
     if INSIGHTFACE_AVAILABLE and face_app is not None:
         age, gender = get_age_gender_insightface(image_path)
         if age:
